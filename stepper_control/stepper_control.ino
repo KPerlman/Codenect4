@@ -5,12 +5,13 @@
 #define STEP_PIN 3
 #define EN_PIN 4
 
-SoftwareSerial PiSerial(10, 11); // RX, TX
+SoftwareSerial PiSerial(8, 9); // RX, TX
 
 AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
 long liftDistance = 3000;
 bool waitingRelease = false;
+bool runContinuous = false;
 
 long parseValue(const String &msg, int prefixLen) {
   String value = msg.substring(prefixLen);
@@ -30,11 +31,34 @@ void setup() {
 }
 
 void loop() {
+  if (runContinuous) {
+    stepper.runSpeed();
+  }
   if (PiSerial.available() > 0) {
     String msg = PiSerial.readStringUntil('\n');
     msg.trim();
 
-    if (msg.startsWith("SPEED ")) {
+    if (msg == "PING") {
+      PiSerial.println("PONG");
+      Serial.println("PONG");
+    } else if (msg.startsWith("ECHO ")) {
+      String payload = msg.substring(5);
+      PiSerial.println(payload);
+      Serial.println(payload);
+    } else if (msg.startsWith("RUN ")) {
+      long speed = parseValue(msg, 4);
+      if (speed != 0) {
+        runContinuous = true;
+        stepper.setSpeed(speed);
+        PiSerial.println("OK");
+      } else {
+        PiSerial.println("ERR");
+      }
+    } else if (msg == "STOP") {
+      runContinuous = false;
+      stepper.setSpeed(0);
+      PiSerial.println("OK");
+    } else if (msg.startsWith("SPEED ")) {
       long speed = parseValue(msg, 6);
       if (speed > 0) {
         stepper.setMaxSpeed(speed);
@@ -56,12 +80,14 @@ void loop() {
       PiSerial.println("OK");
     } else if (msg.startsWith("STEPS ")) {
       long steps = parseValue(msg, 6);
+      runContinuous = false;
       stepper.move(steps);
       while (stepper.distanceToGo() != 0) {
         stepper.run();
       }
       PiSerial.println("DONE");
     } else if (msg.startsWith("MOVE")) {
+      runContinuous = false;
       stepper.move(liftDistance);
       while (stepper.distanceToGo() != 0) {
         stepper.run();

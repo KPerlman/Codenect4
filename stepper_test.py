@@ -23,7 +23,7 @@ def main():
         "--speed",
         type=int,
         default=600,
-        help="Max speed in steps/sec (default: 600)",
+        help="RUN speed in steps/sec (default: 600)",
     )
     parser.add_argument(
         "--steps",
@@ -56,12 +56,15 @@ def main():
         arduino.write(f"STEPS {args.steps}\n".encode())
         wait_for(arduino, {"DONE"})
     else:
-        print("Running continuously (Ctrl+C to stop)")
+        print(f"Running continuously at {args.speed} steps/sec (Ctrl+C to stop)")
         try:
+            arduino.write(f"RUN {args.speed}\n".encode())
+            wait_for(arduino, {"OK", "ERR"})
             while True:
-                arduino.write(b"STEPS 1000\n")
-                wait_for(arduino, {"DONE"})
+                time.sleep(0.5)
         except KeyboardInterrupt:
+            arduino.write(b"STOP\n")
+            wait_for(arduino, {"OK"})
             pass
 
     arduino.close()
