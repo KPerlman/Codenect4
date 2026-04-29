@@ -20,7 +20,7 @@ class RobotController:
         self.top_clear_baseline = self._calibrate_clear_baseline(self.top_color)
         self.top_clear_delta = 500
         # Setup serial connection to Arduino
-        self.arduino = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
+        self.arduino = serial.Serial('/dev/serial0', 9600, timeout=1)
         self.offsets = [1, 6, 10, 6, 15, 2, 0]
 
     def _calibrate_clear_baseline(self, sensor):
