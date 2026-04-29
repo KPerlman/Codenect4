@@ -13,7 +13,7 @@ class RobotController:
         
         self.sensor = DigitalInputDevice(17, pull_up=True)
         # Setup serial connection to Arduino
-        self.arduino = serial.Serial('/dev/ttyUSB0', 9600, timeout=1)
+        self.arduino = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
         self.offsets = [1, 6, 10, 6, 15, 2, 0]
 
     def move_servo(self, channel, angle):
