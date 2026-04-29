@@ -3,18 +3,35 @@ import serial
 import board
 import busio
 from adafruit_pca9685 import PCA9685
-from gpiozero import DigitalInputDevice
+import adafruit_tcs34725
 
 class RobotController:
     def __init__(self):
-        self.i2c = busio.I2C(board.SCL, board.SDA)
-        self.pca = PCA9685(self.i2c)
+        self.i2c_pca = busio.I2C(board.SCL, board.SDA)
+        self.i2c_top = busio.I2C(board.D17, board.D27)
+        self.i2c_bottom = busio.I2C(board.D23, board.D24)
+
+        self.pca = PCA9685(self.i2c_pca)
         self.pca.frequency = 50
-        
-        self.sensor = DigitalInputDevice(17, pull_up=True)
+
+        self.top_color = adafruit_tcs34725.TCS34725(self.i2c_top)
+        self.top_color.integration_time = 100
+        self.top_color.gain = 4
+        self.top_clear_baseline = self._calibrate_clear_baseline(self.top_color)
+        self.top_clear_delta = 500
         # Setup serial connection to Arduino
         self.arduino = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
         self.offsets = [1, 6, 10, 6, 15, 2, 0]
+
+    def _calibrate_clear_baseline(self, sensor):
+        samples = []
+        for _ in range(10):
+            samples.append(sensor.clear)
+            time.sleep(0.02)
+        return sum(samples) / len(samples)
+
+    def _top_piece_detected(self):
+        return self.top_color.clear > (self.top_clear_baseline + self.top_clear_delta)
 
     def move_servo(self, channel, angle):
         corrected_angle = max(0, min(180, angle + self.offsets[channel]))
@@ -41,14 +58,14 @@ class RobotController:
         # Flip the servo for the chosen column
         self.move_servo(col, 90)
 
-        # Wait for IR sensor confirmation
+        # Wait for top color sensor confirmation
         detection_start = None
         sensor_deadline = time.time() + 5.0
         while True:
             if time.time() > sensor_deadline:
-                raise TimeoutError("IR sensor did not confirm piece drop")
+                raise TimeoutError("Top color sensor did not confirm piece drop")
 
-            if self.sensor.value:
+            if self._top_piece_detected():
                 if detection_start is None:
                     detection_start = time.time()
                 if time.time() - detection_start >= 0.5:

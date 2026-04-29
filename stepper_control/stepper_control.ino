@@ -14,7 +14,7 @@ void setup() {
   Serial.begin(9600);
   
   pinMode(EN_PIN, OUTPUT);
-  digitalWrite(EN_PIN, LOW); 
+  digitalWrite(EN_PIN, HIGH); 
   
   stepper.setMaxSpeed(1500);
   stepper.setAcceleration(800);
