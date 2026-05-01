@@ -4,11 +4,11 @@ import busio
 from adafruit_pca9685 import PCA9685
 
 
-def move_servo(pca, channel, angle):
+def move_servo(pca, channel, angle, max_angle=180):
     pulse_min = 450
     pulse_max = 2550
-    corrected_angle = max(0, min(180, angle))
-    pulse = pulse_min + (corrected_angle / 180.0) * (pulse_max - pulse_min)
+    corrected_angle = max(0, min(max_angle, angle))
+    pulse = pulse_min + (corrected_angle / float(max_angle)) * (pulse_max - pulse_min)
     pca.channels[channel].duty_cycle = int(pulse / 20000 * 65535)
 
 
@@ -21,12 +21,20 @@ def main():
     try:
         while True:
             for channel in range(7):
-                print(f"Servo {channel} -> 90")
-                move_servo(pca, channel, 90)
-                time.sleep(1)
-                print(f"Servo {channel} -> 0")
-                move_servo(pca, channel, 0)
-                time.sleep(0.5)
+                if channel == 6:
+                    print("Servo 6 -> 270")
+                    move_servo(pca, channel, 270, max_angle=270)
+                    time.sleep(1)
+                    print("Servo 6 -> 0")
+                    move_servo(pca, channel, 0, max_angle=270)
+                    time.sleep(1)
+                else:
+                    print(f"Servo {channel} -> 90")
+                    move_servo(pca, channel, 90)
+                    time.sleep(1)
+                    print(f"Servo {channel} -> 0")
+                    move_servo(pca, channel, 0)
+                    time.sleep(0.5)
     except KeyboardInterrupt:
         pass
     finally:
