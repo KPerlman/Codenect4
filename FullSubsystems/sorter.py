@@ -32,9 +32,9 @@ MISS_LIMIT = 3
 AGITATE_SWINGS = 4
 AGITATE_DELTA = 12
 
-CLEAR_THRESH = 1733.7
-RED_MARGIN = 33.0
-YELLOW_CLEAR = 1800.0
+CLEAR_THRESH = 1786.7
+RED_MARGIN = 1.0
+YELLOW_CLEAR = 1940.0
 
 
 def move_servo(pca, channel, angle, max_angle=180, offset=0):

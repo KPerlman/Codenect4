@@ -3,9 +3,9 @@ from tcs_bus import open_tcs34725
 
 
 def classify_color(r, g, b, clear):
-    clear_thresh = 1733.7
-    red_margin = 33.0
-    yellow_clear = 1800.0
+    clear_thresh = 1786.7
+    red_margin = 1.0
+    yellow_clear = 1940.0
 
     if clear < clear_thresh:
         return "no piece"
