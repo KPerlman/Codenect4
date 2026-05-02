@@ -34,6 +34,14 @@ class Connect4Tracker:
         self.calibration_frames = 0
         self.is_calibrated = False
         self.baseline_colors = np.zeros((self.grid_rows, self.grid_cols, 3), dtype=np.uint8) # stores RGB of empty board
+        self.calibration_target_frames = 30
+        self.red_fill_threshold = 0.10
+        self.yellow_fill_threshold = 0.18
+        self.red_min_dominance = 35
+        self.yellow_min_blue_gap = 35
+        self.yellow_max_rg_gap = 95
+        self.empty_diff_threshold = 45
+        self.top_diff_threshold = 45
 
         ### GAME STATE
         self.winner = 0 
@@ -207,8 +215,9 @@ class Connect4Tracker:
             # if board is stable for 30 frames, capture empty state
             if not self.is_calibrated:
                 self.calibration_frames += 1
-                cv2.putText(frame, f"CALIBRATING... {int(self.calibration_frames/30*100)}%", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                if self.calibration_frames > 30:
+                progress = min(100, int(self.calibration_frames / self.calibration_target_frames * 100))
+                cv2.putText(frame, f"CALIBRATING... {progress}%", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                if self.calibration_frames > self.calibration_target_frames:
                     self.perform_calibration(warped)
                     self.is_calibrated = True
                     self.reset_detection_state()
@@ -227,18 +236,10 @@ class Connect4Tracker:
         height, width, _ = warped_img.shape
         cell_h = height // self.grid_rows
         cell_w = width // self.grid_cols
-        margin_x = int(cell_w * 0.35)
-        margin_y = int(cell_h * 0.35)
 
         for r in range(self.grid_rows):
             for c in range(self.grid_cols):
-                x1 = c * cell_w + margin_x
-                y1 = r * cell_h + margin_y
-                x2 = (c + 1) * cell_w - margin_x
-                y2 = (r + 1) * cell_h - margin_y
-                
-                roi = warped_img[y1:y2, x1:x2]
-                avg_color = np.average(np.average(roi, axis=0), axis=0)
+                avg_color, _, _, _, _, _ = self.sample_slot(warped_img, r, c, cell_w, cell_h)
                 self.baseline_colors[r, c] = avg_color
 
     def reset_detection_state(self):
@@ -249,23 +250,52 @@ class Connect4Tracker:
         self.current_candidate = np.zeros((self.grid_rows, self.grid_cols), dtype=int)
         self.winner = 0
 
+    def sample_slot(self, warped_img, row, col, cell_w, cell_h):
+        margin_x = int(cell_w * 0.22)
+        margin_y = int(cell_h * 0.22)
+        x1 = col * cell_w + margin_x
+        y1 = row * cell_h + margin_y
+        x2 = (col + 1) * cell_w - margin_x
+        y2 = (row + 1) * cell_h - margin_y
+
+        roi = warped_img[y1:y2, x1:x2]
+        if roi.size == 0:
+            empty = np.zeros(3, dtype=np.float32)
+            return empty, np.zeros((1, 1, 3), dtype=np.uint8), np.zeros((1, 1), dtype=np.uint8), 0.0, 0.0, 0.0
+
+        roi_h, roi_w = roi.shape[:2]
+        mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+        radius = max(1, int(min(roi_h, roi_w) * 0.38))
+        center = (roi_w // 2, roi_h // 2)
+        cv2.circle(mask, center, radius, 255, -1)
+
+        avg_color = cv2.mean(roi, mask=mask)[:3]
+        avg_color = np.array(avg_color, dtype=np.float32)
+        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+        masked_pixels = max(1, cv2.countNonZero(mask))
+        red_mask1 = cv2.inRange(hsv_roi, np.array([0, 70, 70]), np.array([12, 255, 255]))
+        red_mask2 = cv2.inRange(hsv_roi, np.array([165, 70, 70]), np.array([180, 255, 255]))
+        red_mask = cv2.bitwise_or(red_mask1, red_mask2)
+        red_mask = cv2.bitwise_and(red_mask, mask)
+        red_fill = cv2.countNonZero(red_mask) / masked_pixels
+
+        yellow_mask = cv2.inRange(hsv_roi, np.array([12, 35, 70]), np.array([48, 255, 255]))
+        yellow_mask = cv2.bitwise_and(yellow_mask, mask)
+        yellow_fill = cv2.countNonZero(yellow_mask) / masked_pixels
+
+        return avg_color, hsv_roi, mask, red_fill, yellow_fill, masked_pixels
+
     def analyze_grid(self, warped_img):
         height, width, _ = warped_img.shape
         cell_h = height // self.grid_rows
         cell_w = width // self.grid_cols
-        margin_x = int(cell_w * 0.35)
-        margin_y = int(cell_h * 0.35)
 
         ### TOP ROW REFERENCE
         # grab top row colors to see if background changed
         top_row_colors = []
         for c in range(self.grid_cols):
-            x1 = c * cell_w + margin_x
-            y1 = 0 * cell_h + margin_y # Row 0
-            x2 = (c + 1) * cell_w - margin_x
-            y2 = (0 + 1) * cell_h - margin_y
-            roi = warped_img[y1:y2, x1:x2]
-            avg = np.average(np.average(roi, axis=0), axis=0)
+            avg, _, _, _, _, _ = self.sample_slot(warped_img, 0, c, cell_w, cell_h)
             top_row_colors.append(avg)
 
         for c in range(self.grid_cols):
@@ -276,35 +306,35 @@ class Connect4Tracker:
                 if self.board_state[r, c] != 0:
                     continue
 
-                x1 = c * cell_w + margin_x
-                y1 = r * cell_h + margin_y
-                x2 = (c + 1) * cell_w - margin_x
-                y2 = (r + 1) * cell_h - margin_y
-                
-                roi = warped_img[y1:y2, x1:x2]
+                avg_color, hsv_roi, slot_mask, red_fill, yellow_fill, masked_pixels = self.sample_slot(
+                    warped_img,
+                    r,
+                    c,
+                    cell_w,
+                    cell_h,
+                )
                 
                 ### MEAN COLOR ANALYSIS
                 # get average color of slot region
-                avg_color = np.average(np.average(roi, axis=0), axis=0)
-                
                 # convert to HSV for logic
                 hsv_pixel = cv2.cvtColor(np.uint8([[avg_color]]), cv2.COLOR_BGR2HSV)[0][0]
                 h, s, v = int(hsv_pixel[0]), int(hsv_pixel[1]), int(hsv_pixel[2])
+                b, g, red = float(avg_color[0]), float(avg_color[1]), float(avg_color[2])
                 
                 ### FILTER 3 GLINT DETECTION (Specular Highlights)
                 # check for small cluster of bright white pixels
                 # Value > 220 and Saturation < 50
-                hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
                 # create mask for bright white glints
                 lower_white = np.array([0, 0, 220])
                 upper_white = np.array([180, 50, 255])
                 glint_mask = cv2.inRange(hsv_roi, lower_white, upper_white)
+                glint_mask = cv2.bitwise_and(glint_mask, slot_mask)
                 glint_count = cv2.countNonZero(glint_mask)
                 has_glint = glint_count > 5 # if we see >5 shiny pixels it is likely plastic
 
                 ### FILTER 4 TEXTURE / NOISE CHECK
                 # calculate Standard Deviation of Value channel
-                _, std_dev = cv2.meanStdDev(hsv_roi[:,:,2]) # Index 2 is Value
+                _, std_dev = cv2.meanStdDev(hsv_roi[:, :, 2], mask=slot_mask) # Index 2 is Value
                 # high std_dev means high contrast or noise aka background clutter
                 # low std_dev means smooth surface
                 # note glints also increase std_dev so we ignore this check if has_glint is true
@@ -313,14 +343,22 @@ class Connect4Tracker:
                 detected = 0 
 
                 ### COLOR CLASSIFICATION
+                red_dominance = red - max(g, b)
+                yellow_blue_gap = min(red, g) - b
+                yellow_rg_gap = abs(red - g)
+
                 # check RED first
-                if ((h < 15) or (h > 160)) and (s > 65): 
+                if red_fill >= self.red_fill_threshold and red_dominance > self.red_min_dominance and s > 65:
                     detected = 1 
                 
                 # check YELLOW
-                # widened Hue 10-85 to catch greenish or orangey yellows
-                # lowered Saturation > 20 to catch pale or bright yellows
-                elif (10 <= h <= 85) and (s > 20): 
+                elif (
+                    yellow_fill >= self.yellow_fill_threshold
+                    and (12 <= h <= 55)
+                    and (s > 35)
+                    and yellow_blue_gap > self.yellow_min_blue_gap
+                    and yellow_rg_gap < self.yellow_max_rg_gap
+                ):
                     detected = 2 
                 
                 ### APPLY NO GATES (Rejection Logic)
@@ -330,7 +368,7 @@ class Connect4Tracker:
                     base_color = self.baseline_colors[r, c]
                     # euclidean distance between RGB vectors
                     diff_base = np.linalg.norm(avg_color - base_color)
-                    if diff_base < 45: # threshold for Same as Empty
+                    if diff_base < self.empty_diff_threshold: # threshold for Same as Empty
                         detected = 0
 
                 # Gate B is it basically same as Top Row (Dynamic Background)
@@ -339,7 +377,7 @@ class Connect4Tracker:
                 diff_top = np.linalg.norm(avg_color - top_color)
                 # if current slot looks like empty top slot assume empty
                 # but don't accidentally erase a piece if top row is also that piece color
-                if diff_top < 45 and not has_glint: 
+                if diff_top < self.top_diff_threshold and not has_glint: 
                     detected = 0
 
                 # Gate C is it too noisy (Background texture)
@@ -359,7 +397,8 @@ class Connect4Tracker:
                     self.detection_buffer[r, c] = 0
                     self.current_candidate[r, c] = detected
                 
-                if self.detection_buffer[r, c] > self.persistence_threshold:
+                required_persistence = self.persistence_threshold + (6 if detected == 2 else 0)
+                if self.detection_buffer[r, c] > required_persistence:
                     # gravity check
                     is_bottom = (r == self.grid_rows - 1)
                     has_support = False
