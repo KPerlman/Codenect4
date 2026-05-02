@@ -1,13 +1,14 @@
 import time
+import sys
+from pathlib import Path
 import board
 import busio
 from adafruit_pca9685 import PCA9685
-import adafruit_tcs34725
-import adafruit_bitbangio as bitbangio
-try:
-    from adafruit_extended_bus import ExtendedI2C
-except ImportError:
-    ExtendedI2C = None
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from tcs_bus import open_tcs34725
 
 
 SERVO_CHANNEL = 6
@@ -66,19 +67,10 @@ def agitate(pca, base_angle):
 
 def main():
     i2c_pca = busio.I2C(board.SCL, board.SDA)
-    if ExtendedI2C is not None:
-        i2c_sorter = ExtendedI2C(3)
-    else:
-        try:
-            i2c_sorter = busio.I2C(board.D17, board.D27)
-        except ValueError:
-            i2c_sorter = bitbangio.I2C(board.D27, board.D17)
 
     pca = PCA9685(i2c_pca)
     pca.frequency = 50
-    sensor = adafruit_tcs34725.TCS34725(i2c_sorter)
-    sensor.integration_time = 100
-    sensor.gain = 4
+    sensor = open_tcs34725(3, integration_time_ms=100, gain=4)
 
     miss_count = 0
     next_pickup_right = True

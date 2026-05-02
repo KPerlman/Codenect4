@@ -1,8 +1,5 @@
 import time
-import board
-import busio
-import adafruit_bitbangio as bitbangio
-import adafruit_tcs34725
+from tcs_bus import open_tcs34725
 
 
 def classify_color(r, g, b, clear):
@@ -20,13 +17,7 @@ def classify_color(r, g, b, clear):
 
 
 def main():
-    try:
-        i2c = busio.I2C(board.D17, board.D27)
-    except ValueError:
-        i2c = bitbangio.I2C(board.D27, board.D17)
-    sensor = adafruit_tcs34725.TCS34725(i2c)
-    sensor.integration_time = 100
-    sensor.gain = 4
+    sensor = open_tcs34725(3, integration_time_ms=100, gain=4)
 
     print("Reading sorter color sensor on GPIO17/27. Ctrl+C to stop.")
     try:

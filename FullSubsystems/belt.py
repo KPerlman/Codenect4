@@ -1,14 +1,14 @@
 import time
+import sys
+from pathlib import Path
 import board
 import busio
 import serial
-import adafruit_tcs34725
-import adafruit_bitbangio as bitbangio
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-try:
-    from adafruit_extended_bus import ExtendedI2C
-except ImportError:
-    ExtendedI2C = None
+from tcs_bus import open_tcs34725
 
 
 PORT = "/dev/serial0"
@@ -39,15 +39,6 @@ def send_cmd(ser, cmd, expect=None):
     return None
 
 
-def open_sorter_i2c():
-    if ExtendedI2C is not None:
-        return ExtendedI2C(3)
-    try:
-        return busio.I2C(board.D17, board.D27)
-    except ValueError:
-        return bitbangio.I2C(board.D27, board.D17)
-
-
 def boost(ser):
     send_cmd(ser, "STOP", {"OK"})
     send_cmd(ser, f"SPEED {BOOST_SPEED}", {"OK", "ERR"})
@@ -57,10 +48,7 @@ def boost(ser):
 
 
 def main():
-    i2c = open_sorter_i2c()
-    sensor = adafruit_tcs34725.TCS34725(i2c)
-    sensor.integration_time = 100
-    sensor.gain = 4
+    sensor = open_tcs34725(3, integration_time_ms=100, gain=4)
 
     ser = serial.Serial(PORT, 9600, timeout=1)
     time.sleep(2)
