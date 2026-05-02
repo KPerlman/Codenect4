@@ -2,6 +2,7 @@ import argparse
 import os
 import sys
 import time
+import threading
 from pathlib import Path
 
 import cv2
@@ -67,6 +68,10 @@ def choose_camera(preferred_index=None, preferred_device=None, max_check=5, widt
 
 def user_visible_column(board_state, column):
     return board_state.shape[1] - 1 - column
+
+
+def internal_column_from_user(board_state, visible_column):
+    return board_state.shape[1] - 1 - visible_column
 
 
 def board_to_text(board_state):
@@ -192,7 +197,7 @@ def legal_human_transition(previous_board, current_board):
     if curr_yellow != curr_red + 1:
         return False, "After YELLOW's turn, yellow count must be exactly one ahead of red."
 
-    return True, f"Accepted YELLOW move in column {col}."
+    return True, f"Accepted YELLOW move in column {user_visible_column(current_board, col)}."
 
 
 def legal_ai_transition(previous_board, current_board):
@@ -216,7 +221,7 @@ def legal_ai_transition(previous_board, current_board):
     if curr_red != curr_yellow:
         return False, "After RED's turn, red and yellow counts must match."
 
-    return True, f"Accepted RED move in column {col}."
+    return True, f"Accepted RED move in column {user_visible_column(current_board, col)}."
 
 
 def board_distance(left, right):
@@ -274,25 +279,38 @@ def infer_most_likely_move(previous_board, observed_board, piece):
     }
 
 
+def parse_visible_manual_move(previous_board, piece, raw_value):
+    raw = raw_value.strip().lower()
+    if raw in {"", "wait", "w"}:
+        return None
+    try:
+        visible_column = int(raw)
+    except ValueError:
+        return "invalid"
+    if visible_column < 0 or visible_column >= previous_board.shape[1]:
+        return "invalid"
+
+    internal_column = internal_column_from_user(previous_board, visible_column)
+    next_board = apply_move_to_board(previous_board, piece, internal_column)
+    if next_board is None:
+        return "invalid"
+    return visible_column, internal_column, next_board
+
+
 def prompt_manual_move(previous_board, piece, prompt_label):
     while True:
         raw = input(
             f"Vision is uncertain. Enter the actual {prompt_label} move column (0-6), "
             "or type 'wait' to keep watching: "
-        ).strip().lower()
-        if raw in {"wait", "w", ""}:
+        )
+        parsed = parse_visible_manual_move(previous_board, piece, raw)
+        if parsed is None:
             return None
-        try:
-            column = int(raw)
-        except ValueError:
+        if parsed == "invalid":
             print("Enter a column number 0-6, or 'wait'.")
             continue
-
-        next_board = apply_move_to_board(previous_board, piece, column)
-        if next_board is None:
-            print(f"Column {column} is full or invalid.")
-            continue
-        return column, next_board
+        visible_column, _, next_board = parsed
+        return visible_column, next_board
 
 
 def vision_board_to_minimax(board_state):
@@ -333,6 +351,26 @@ def compute_ai_move(board_state, depth):
     return move, minimax_board_to_vision(expected_board), score
 
 
+def compute_ai_move_with_animation(board_state, depth):
+    result = {}
+
+    def worker():
+        result["value"] = compute_ai_move(board_state, depth)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    frames = ["Thinking   ", "Thinking.  ", "Thinking.. ", "Thinking..."]
+    index = 0
+    while thread.is_alive():
+        print(f"\r{frames[index % len(frames)]}", end="", flush=True)
+        time.sleep(0.25)
+        index += 1
+    thread.join()
+    print("\r" + (" " * 16) + "\r", end="", flush=True)
+    return result["value"]
+
+
 def print_ai_instruction(column, score, expected_board):
     print(
         "\nComputer move: place a RED piece in column "
@@ -346,6 +384,33 @@ def accept_confirmed_ai_move(confirmed_board, ai_expected_board):
     confirmed_board = np.copy(ai_expected_board)
     print("\nRED move accepted on user confirmation. Your turn again.")
     return confirmed_board
+
+
+def confirm_detected_human_move(previous_board, detected_board):
+    added = find_single_added_piece(previous_board, detected_board, HUMAN_PIECE)
+    if added is None:
+        return detected_board
+
+    _, internal_col = added
+    visible_col = user_visible_column(detected_board, internal_col)
+    while True:
+        raw = input(
+            f"Detected YELLOW in column {visible_col}. "
+            "Press Enter/y to confirm, or type the correct column (0-6): "
+        ).strip().lower()
+        if raw in {"", "y", "yes"}:
+            return detected_board
+
+        parsed = parse_visible_manual_move(previous_board, HUMAN_PIECE, raw)
+        if parsed == "invalid":
+            print("Enter a column number 0-6, or press Enter to confirm the detected move.")
+            continue
+        if parsed is None:
+            return detected_board
+
+        visible_column, _, corrected_board = parsed
+        print(f"Using manually confirmed YELLOW move in column {visible_column}.")
+        return corrected_board
 
 
 def open_camera(source, width, height):
@@ -414,6 +479,21 @@ def warmup_camera(cap, frames=5):
     return True
 
 
+def poll_console_line():
+    if not sys.stdin or sys.stdin.closed:
+        return None
+    try:
+        if is_linux():
+            import select
+
+            ready, _, _ = select.select([sys.stdin], [], [], 0)
+            if ready:
+                return sys.stdin.readline()
+        return None
+    except Exception:
+        return None
+
+
 def reopen_camera(source, width, height, warmup_frames=3, attempts=8, delay_s=0.4):
     for _ in range(attempts):
         if not source_exists(source):
@@ -431,6 +511,10 @@ def reopen_camera(source, width, height, warmup_frames=3, attempts=8, delay_s=0.
             continue
         return cap
     return None
+
+
+def sync_tracker_state(tracker, board_state):
+    tracker.board_state = np.copy(board_state)
 
 
 def main():
@@ -645,20 +729,82 @@ def main():
                         print("Waiting for tracker calibration before starting play...")
                         calibration_announced = True
                 elif stable_board is not None:
+                    pending_line = poll_console_line()
                     if confirmed_board is None:
                         confirmed_board = np.copy(stable_board)
                         print_board_state(confirmed_board, tracker.winner, tracker)
                         print("\nYou are YELLOW and go first.")
                         print("Make your move on the real board. The script will detect it automatically.")
+                        print("If vision is slow or wrong, type your YELLOW column (0-6) and press Enter.")
                         stable_printed_board = np.copy(confirmed_board)
                     elif not boards_equal(stable_board, stable_printed_board):
                         print_board_state(stable_board, tracker.winner, tracker)
                         stable_printed_board = np.copy(stable_board)
 
                     if game_state == "waiting_human":
+                        if pending_line is not None:
+                            parsed_manual = parse_visible_manual_move(confirmed_board, HUMAN_PIECE, pending_line)
+                            if parsed_manual == "invalid":
+                                print("Manual input should be a visible column number 0-6.")
+                            elif parsed_manual is not None:
+                                visible_col, _, manual_board = parsed_manual
+                                confirmed_board = np.copy(manual_board)
+                                sync_tracker_state(tracker, confirmed_board)
+                                last_seen_board = np.copy(confirmed_board)
+                                stable_board = np.copy(confirmed_board)
+                                stable_streak = args.state_streak
+                                stable_printed_board = None
+                                illegal_notice = None
+                                human_illegal_retries = 0
+                                last_rejected_human_board = None
+                                last_human_inference_key = None
+                                human_inference_hold = 0
+                                print(f"Manual YELLOW move recorded in column {visible_col}.")
+                                if board_winner(confirmed_board) == HUMAN_PIECE:
+                                    print("\nYELLOW wins.")
+                                    break
+                                if board_full(confirmed_board):
+                                    print("\nBoard is full. Draw.")
+                                    break
+
+                                ai_move_col, ai_expected_board, score = compute_ai_move_with_animation(
+                                    confirmed_board,
+                                    args.depth,
+                                )
+                                if ai_move_col is None or ai_expected_board is None:
+                                    print("\nNo legal AI move found. Game over.")
+                                    break
+
+                                print_ai_instruction(ai_move_col, score, ai_expected_board)
+                                input("Place the RED piece there, then press Enter to continue...")
+                                confirmed_board = accept_confirmed_ai_move(confirmed_board, ai_expected_board)
+                                sync_tracker_state(tracker, confirmed_board)
+                                last_seen_board = np.copy(confirmed_board)
+                                stable_board = np.copy(confirmed_board)
+                                stable_streak = args.state_streak
+                                if board_winner(confirmed_board) == AI_PIECE:
+                                    print("\nRED wins.")
+                                    break
+                                if board_full(confirmed_board):
+                                    print("\nBoard is full. Draw.")
+                                    break
+                                illegal_notice = None
+                                ai_illegal_retries = 0
+                                last_rejected_ai_board = None
+                                last_ai_inference_key = None
+                                ai_inference_hold = 0
+                                stable_printed_board = None
+                                game_state = "waiting_human"
+                                waiting_ai_notice = False
+                                continue
+
                         is_legal, message = legal_human_transition(confirmed_board, stable_board)
                         if is_legal:
-                            confirmed_board = np.copy(stable_board)
+                            confirmed_board = np.copy(confirm_detected_human_move(confirmed_board, stable_board))
+                            sync_tracker_state(tracker, confirmed_board)
+                            last_seen_board = np.copy(confirmed_board)
+                            stable_board = np.copy(confirmed_board)
+                            stable_streak = args.state_streak
                             illegal_notice = None
                             human_illegal_retries = 0
                             last_rejected_human_board = None
@@ -672,7 +818,10 @@ def main():
                                 print("\nBoard is full. Draw.")
                                 break
 
-                            ai_move_col, ai_expected_board, score = compute_ai_move(confirmed_board, args.depth)
+                            ai_move_col, ai_expected_board, score = compute_ai_move_with_animation(
+                                confirmed_board,
+                                args.depth,
+                            )
                             if ai_move_col is None or ai_expected_board is None:
                                 print("\nNo legal AI move found. Game over.")
                                 break
@@ -680,6 +829,10 @@ def main():
                             print_ai_instruction(ai_move_col, score, ai_expected_board)
                             input("Place the RED piece there, then press Enter to continue...")
                             confirmed_board = accept_confirmed_ai_move(confirmed_board, ai_expected_board)
+                            sync_tracker_state(tracker, confirmed_board)
+                            last_seen_board = np.copy(confirmed_board)
+                            stable_board = np.copy(confirmed_board)
+                            stable_streak = args.state_streak
                             if board_winner(confirmed_board) == AI_PIECE:
                                 print("\nRED wins.")
                                 break
@@ -731,7 +884,14 @@ def main():
                                     last_rejected_human_board = None
                                     last_human_inference_key = None
                                     human_inference_hold = 0
-                                    print(f"Accepting inferred YELLOW move in column {inferred['column']}.")
+                                    print(
+                                        "Accepting inferred YELLOW move in column "
+                                        f"{user_visible_column(confirmed_board, inferred['column'])}."
+                                    )
+                                    sync_tracker_state(tracker, confirmed_board)
+                                    last_seen_board = np.copy(confirmed_board)
+                                    stable_board = np.copy(confirmed_board)
+                                    stable_streak = args.state_streak
                                     if board_winner(confirmed_board) == HUMAN_PIECE:
                                         print("\nYELLOW wins.")
                                         break
@@ -739,7 +899,10 @@ def main():
                                         print("\nBoard is full. Draw.")
                                         break
 
-                                    ai_move_col, ai_expected_board, score = compute_ai_move(confirmed_board, args.depth)
+                                    ai_move_col, ai_expected_board, score = compute_ai_move_with_animation(
+                                        confirmed_board,
+                                        args.depth,
+                                    )
                                     if ai_move_col is None or ai_expected_board is None:
                                         print("\nNo legal AI move found. Game over.")
                                         break
@@ -747,6 +910,10 @@ def main():
                                     print_ai_instruction(ai_move_col, score, ai_expected_board)
                                     input("Place the RED piece there, then press Enter to continue...")
                                     confirmed_board = accept_confirmed_ai_move(confirmed_board, ai_expected_board)
+                                    sync_tracker_state(tracker, confirmed_board)
+                                    last_seen_board = np.copy(confirmed_board)
+                                    stable_board = np.copy(confirmed_board)
+                                    stable_streak = args.state_streak
                                     if board_winner(confirmed_board) == AI_PIECE:
                                         print("\nRED wins.")
                                         break
@@ -768,6 +935,10 @@ def main():
                                 if manual is not None:
                                     manual_col, manual_board = manual
                                     confirmed_board = manual_board
+                                    sync_tracker_state(tracker, confirmed_board)
+                                    last_seen_board = np.copy(confirmed_board)
+                                    stable_board = np.copy(confirmed_board)
+                                    stable_streak = args.state_streak
                                     illegal_notice = None
                                     human_illegal_retries = 0
                                     last_rejected_human_board = None
@@ -781,7 +952,10 @@ def main():
                                         print("\nBoard is full. Draw.")
                                         break
 
-                                    ai_move_col, ai_expected_board, score = compute_ai_move(confirmed_board, args.depth)
+                                    ai_move_col, ai_expected_board, score = compute_ai_move_with_animation(
+                                        confirmed_board,
+                                        args.depth,
+                                    )
                                     if ai_move_col is None or ai_expected_board is None:
                                         print("\nNo legal AI move found. Game over.")
                                         break
@@ -789,6 +963,10 @@ def main():
                                     print_ai_instruction(ai_move_col, score, ai_expected_board)
                                     input("Place the RED piece there, then press Enter to continue...")
                                     confirmed_board = accept_confirmed_ai_move(confirmed_board, ai_expected_board)
+                                    sync_tracker_state(tracker, confirmed_board)
+                                    last_seen_board = np.copy(confirmed_board)
+                                    stable_board = np.copy(confirmed_board)
+                                    stable_streak = args.state_streak
                                     if board_winner(confirmed_board) == AI_PIECE:
                                         print("\nRED wins.")
                                         break
