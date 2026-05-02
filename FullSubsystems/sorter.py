@@ -57,18 +57,17 @@ def classify_color(
 
     if clear < clear_thresh:
         return "none", (r, g, b, clear, red_delta)
-    if clear >= yellow_clear:
-        return "yellow", (r, g, b, clear, red_delta)
     if red_delta >= red_margin and r > g and r > b:
         return "red", (r, g, b, clear, red_delta)
+    if clear >= yellow_clear and g >= b:
+        return "yellow", (r, g, b, clear, red_delta)
     return "none", (r, g, b, clear, red_delta)
 
 
 def read_sample(sensor, count=5, delay_s=0.05):
     r_total = g_total = b_total = c_total = 0
     for _ in range(count):
-        r, g, b = sensor.color_rgb_bytes
-        _, _, _, clear = sensor.color_raw
+        r, g, b, clear = sensor.color_raw
         r_total += r
         g_total += g
         b_total += b
@@ -191,7 +190,14 @@ def calibrate_mode(
 
     if red_samples:
         red_margins = [s[0] - max(s[1], s[2]) for s in red_samples]
-        print(f"Suggested red margin (r - max(g,b)): {min(red_margins):.1f}")
+        none_red_margins = [s[0] - max(s[1], s[2]) for s in none_samples]
+        if none_red_margins:
+            red_margin = (min(red_margins) + max(none_red_margins)) / 2.0
+            print(f"Suggested red margin (r - max(g,b)): {red_margin:.1f}")
+            if min(red_margins) <= max(none_red_margins):
+                print("Warning: red and none red-margin ranges overlap; red separation may need tuning.")
+        else:
+            print(f"Suggested red margin (r - max(g,b)): {min(red_margins):.1f}")
 
     if yellow_samples:
         yellow_clears = [s[3] for s in yellow_samples]

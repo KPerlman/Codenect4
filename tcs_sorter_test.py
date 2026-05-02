@@ -11,10 +11,10 @@ def classify_color(r, g, b, clear):
 
     if clear < clear_thresh:
         return "no piece"
-    if clear >= yellow_clear:
-        return "yellow piece"
     if red_delta >= red_margin and r > g and r > b:
         return "red piece"
+    if clear >= yellow_clear and g >= b:
+        return "yellow piece"
     return "no piece"
 
 
@@ -24,8 +24,7 @@ def main():
     print("Reading sorter color sensor on GPIO17/27. Ctrl+C to stop.")
     try:
         while True:
-            r, g, b = sensor.color_rgb_bytes
-            _, _, _, clear = sensor.color_raw
+            r, g, b, clear = sensor.color_raw
             result = classify_color(r, g, b, clear)
             print(f"{result} (r={r} g={g} b={b} clear={clear})")
             time.sleep(1.0)
