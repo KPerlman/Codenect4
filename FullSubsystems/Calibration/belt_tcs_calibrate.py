@@ -2,18 +2,40 @@ import time
 import sys
 from pathlib import Path
 import serial
+import board
+import adafruit_tcs34725
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from tcs_bus import open_tcs34725
+try:
+    import adafruit_bitbangio as linux_bitbangio
+except ImportError:
+    linux_bitbangio = None
 
+import bitbangio
 
 PORT = "/dev/serial0"
 DEFAULT_SPEED = 4000
 STEP_SIZE = 1500
 ACCEL = 400
+
+
+def open_belt_tcs34725(integration_time_ms=100, gain=4):
+    # Belt TCS34725 is wired to a software I2C pair on GPIO23/24.
+    bitbang_mod = linux_bitbangio or bitbangio
+    try:
+        i2c = bitbang_mod.I2C(board.D23, board.D24)
+    except NotImplementedError as exc:
+        raise RuntimeError(
+            "Software I2C on GPIO23/24 requires the Linux package "
+            "'Adafruit-CircuitPython-BitbangIO'. Install it in your venv and try again."
+        ) from exc
+    sensor = adafruit_tcs34725.TCS34725(i2c)
+    sensor.integration_time = integration_time_ms
+    sensor.gain = gain
+    return sensor
 
 
 def wait_for(ser, targets, timeout_s=2.0):
@@ -66,7 +88,7 @@ def summarize(samples):
 
 
 def main():
-    sensor = open_tcs34725(3, integration_time_ms=100, gain=4)
+    sensor = open_belt_tcs34725(integration_time_ms=100, gain=4)
 
     ser = serial.Serial(PORT, 9600, timeout=1)
     time.sleep(2)

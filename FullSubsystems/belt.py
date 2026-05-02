@@ -3,24 +3,44 @@ import time
 import sys
 from pathlib import Path
 import board
-import busio
 import serial
+import adafruit_tcs34725
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from tcs_bus import open_tcs34725
+try:
+    import adafruit_bitbangio as linux_bitbangio
+except ImportError:
+    linux_bitbangio = None
 
+import bitbangio
 
 PORT = "/dev/serial0"
 DEFAULT_SPEED = 1000
 BOOST_SPEED = 5000
 BOOST_STEPS = 3000
-CALIBRATE_STEPS = 250
+CALIBRATE_STEPS = 750
 ACCEL = 2000
 CLEAR_THRESH = 2051.0
 SAMPLE_DELAY = 0.05
 CONFIRM_READS = 3
+
+
+def open_belt_tcs34725(integration_time_ms=100, gain=4):
+    # Belt TCS34725 is wired to a software I2C pair on GPIO23/24.
+    bitbang_mod = linux_bitbangio or bitbangio
+    try:
+        i2c = bitbang_mod.I2C(board.D23, board.D24)
+    except NotImplementedError as exc:
+        raise RuntimeError(
+            "Software I2C on GPIO23/24 requires the Linux package "
+            "'Adafruit-CircuitPython-BitbangIO'. Install it in your venv and try again."
+        ) from exc
+    sensor = adafruit_tcs34725.TCS34725(i2c)
+    sensor.integration_time = integration_time_ms
+    sensor.gain = gain
+    return sensor
 
 
 def wait_for(ser, targets, timeout_s=2.0):
@@ -72,6 +92,14 @@ def update_threshold(piece_samples, empty_samples, current_thresh):
     return current_thresh
 
 
+def print_run_command(clear_thresh):
+    print("\nRun with:")
+    print(
+        "python3 FullSubsystems/belt.py "
+        f"--clear-thresh {clear_thresh:.1f}"
+    )
+
+
 def boost(ser):
     send_cmd(ser, "STOP", {"OK"})
     send_cmd(ser, f"SPEED {BOOST_SPEED}", {"OK", "ERR"})
@@ -85,8 +113,8 @@ def sample_present(sensor, threshold):
     return clear >= threshold, clear
 
 
-def calibrate_mode(ser, sensor):
-    clear_thresh = CLEAR_THRESH
+def calibrate_mode(ser, sensor, initial_clear_thresh):
+    clear_thresh = initial_clear_thresh
     piece_samples = []
     empty_samples = []
 
@@ -139,8 +167,10 @@ def calibrate_mode(ser, sensor):
         if piece_samples and empty_samples:
             final_thresh = update_threshold(piece_samples, empty_samples, clear_thresh)
             print(f"Suggested clear threshold: {final_thresh:.1f}")
+            print_run_command(final_thresh)
         else:
             print(f"Suggested clear threshold: {clear_thresh:.1f}")
+            print_run_command(clear_thresh)
 
 
 def main():
@@ -150,9 +180,15 @@ def main():
         action="store_true",
         help="Run calibration mode: move 250 steps between samples and print thresholds",
     )
+    parser.add_argument(
+        "--clear-thresh",
+        type=float,
+        default=CLEAR_THRESH,
+        help="Clear threshold used to detect a belt piece",
+    )
     args = parser.parse_args()
 
-    sensor = open_tcs34725(3, integration_time_ms=100, gain=4)
+    sensor = open_belt_tcs34725(integration_time_ms=100, gain=4)
 
     ser = serial.Serial(PORT, 9600, timeout=1)
     time.sleep(2)
@@ -162,14 +198,14 @@ def main():
     send_cmd(ser, f"ACCEL {ACCEL}", {"OK", "ERR"})
 
     if args.calibrate:
-        calibrate_mode(ser, sensor)
+        calibrate_mode(ser, sensor, args.clear_thresh)
         send_cmd(ser, "STOP", {"OK"})
         ser.close()
         return
 
     send_cmd(ser, f"RUN {DEFAULT_SPEED}", {"OK", "ERR"})
 
-    clear_thresh = CLEAR_THRESH
+    clear_thresh = args.clear_thresh
     piece_samples = []
     empty_samples = []
     last_present = False
@@ -230,8 +266,10 @@ def main():
             if piece_samples and empty_samples:
                 final_thresh = update_threshold(piece_samples, empty_samples, clear_thresh)
                 print(f"Suggested clear threshold: {final_thresh:.1f}")
+                print_run_command(final_thresh)
             else:
                 print(f"Suggested clear threshold: {clear_thresh:.1f}")
+                print_run_command(clear_thresh)
         ser.close()
 
 
