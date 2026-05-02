@@ -12,6 +12,15 @@ except ImportError:
     SMBus = None
 
 
+def _sensor_not_found_error(busnum, source_exc):
+    err = RuntimeError(
+        f"TCS34725 not found on /dev/i2c-{busnum} at address 0x29. "
+        "Check sensor power, GND, SDA/SCL wiring, and whether the sensor is really on that I2C bus."
+    )
+    err.__cause__ = source_exc
+    return err
+
+
 class TCS34725Raw:
     ADDRESS = 0x29
     COMMAND = 0x80
@@ -27,10 +36,13 @@ class TCS34725Raw:
     def __init__(self, busnum, integration_time_ms=100, gain=4):
         if SMBus is None:
             raise RuntimeError("smbus2 is required for software I2C")
-        self.bus = SMBus(busnum)
-        self._write8(self.REG_ENABLE, 0x03)
-        self._write8(self.REG_ATIME, self._atime_from_ms(integration_time_ms))
-        self._write8(self.REG_CONTROL, self._gain_to_reg(gain))
+        try:
+            self.bus = SMBus(busnum)
+            self._write8(self.REG_ENABLE, 0x03)
+            self._write8(self.REG_ATIME, self._atime_from_ms(integration_time_ms))
+            self._write8(self.REG_CONTROL, self._gain_to_reg(gain))
+        except OSError as exc:
+            raise _sensor_not_found_error(busnum, exc)
         time.sleep(0.01)
 
     def _write8(self, reg, value):

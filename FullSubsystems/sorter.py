@@ -217,6 +217,12 @@ def agitate(pca, base_angle):
 def main():
     parser = argparse.ArgumentParser(description="Sorter control / calibration")
     parser.add_argument("--calibrate", action="store_true", help="Run interactive calibration mode")
+    parser.add_argument(
+        "--sensor-bus",
+        type=int,
+        default=3,
+        help="I2C bus number for the TCS34725 sensor (default: 3)",
+    )
     parser.add_argument("--clear-thresh", type=float, default=CLEAR_THRESH)
     parser.add_argument("--red-margin", type=float, default=RED_MARGIN)
     parser.add_argument("--yellow-clear", type=float, default=YELLOW_CLEAR)
@@ -233,7 +239,7 @@ def main():
 
     pca = PCA9685(i2c_pca)
     pca.frequency = 50
-    sensor = open_tcs34725(3, integration_time_ms=100, gain=4)
+    sensor = open_tcs34725(args.sensor_bus, integration_time_ms=100, gain=4)
 
     miss_count = 0
     next_pickup_right = True
