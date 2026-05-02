@@ -36,6 +36,7 @@ AGITATE_DELTA = 12
 CLEAR_THRESH = 1786.7
 RED_MARGIN = 8.0
 YELLOW_CLEAR = 1940.0
+YELLOW_GREEN_MIN = 900.0
 
 
 def move_servo(pca, channel, angle, max_angle=180, offset=0):
@@ -49,6 +50,7 @@ def classify_color(
     clear_thresh,
     red_margin,
     yellow_clear,
+    yellow_green_min,
     sample_count=5,
     sample_delay=0.05,
 ):
@@ -57,7 +59,7 @@ def classify_color(
 
     if clear < clear_thresh:
         return "none", (r, g, b, clear, red_delta)
-    if clear >= yellow_clear:
+    if clear >= yellow_clear and g >= yellow_green_min:
         return "yellow", (r, g, b, clear, red_delta)
     if red_delta >= red_margin and r > g and r > b:
         return "red", (r, g, b, clear, red_delta)
@@ -117,6 +119,7 @@ def calibrate_mode(
     clear_thresh,
     red_margin,
     yellow_clear,
+    yellow_green_min,
 ):
     red_samples = []
     yellow_samples = []
@@ -183,6 +186,7 @@ def calibrate_mode(
     suggested_clear_thresh = clear_thresh
     suggested_red_margin = red_margin
     suggested_yellow_clear = yellow_clear
+    suggested_yellow_green_min = yellow_green_min
 
     if piece_clears and none_clears:
         piece_min = min(piece_clears)
@@ -216,6 +220,17 @@ def calibrate_mode(
             suggested_yellow_clear = min(yellow_clears)
             print(f"Suggested yellow clear threshold: {suggested_yellow_clear:.1f}")
 
+        yellow_greens = [s[1] for s in yellow_samples]
+        non_yellow_greens = [s[1] for s in red_samples + none_samples]
+        if non_yellow_greens:
+            suggested_yellow_green_min = (min(yellow_greens) + max(non_yellow_greens)) / 2.0
+            print(f"Suggested yellow green minimum: {suggested_yellow_green_min:.1f}")
+            if min(yellow_greens) <= max(non_yellow_greens):
+                print("Warning: yellow and non-yellow green ranges overlap; yellow separation may need tuning.")
+        else:
+            suggested_yellow_green_min = min(yellow_greens)
+            print(f"Suggested yellow green minimum: {suggested_yellow_green_min:.1f}")
+
     print("\nRun with:")
     print(
         "python3 FullSubsystems/sorter.py "
@@ -223,6 +238,7 @@ def calibrate_mode(
         f"--clear-thresh {suggested_clear_thresh:.1f} "
         f"--red-margin {suggested_red_margin:.1f} "
         f"--yellow-clear {suggested_yellow_clear:.1f} "
+        f"--yellow-green-min {suggested_yellow_green_min:.1f} "
         "--debug"
     )
 
@@ -248,6 +264,7 @@ def main():
     parser.add_argument("--clear-thresh", type=float, default=CLEAR_THRESH)
     parser.add_argument("--red-margin", type=float, default=RED_MARGIN)
     parser.add_argument("--yellow-clear", type=float, default=YELLOW_CLEAR)
+    parser.add_argument("--yellow-green-min", type=float, default=YELLOW_GREEN_MIN)
     parser.add_argument("--pickup-settle", type=float, default=PICKUP_SETTLE)
     parser.add_argument("--detect-settle", type=float, default=DETECT_SETTLE)
     parser.add_argument("--drop-settle", type=float, default=DROP_SETTLE)
@@ -283,6 +300,7 @@ def main():
                 clear_thresh=args.clear_thresh,
                 red_margin=args.red_margin,
                 yellow_clear=args.yellow_clear,
+                yellow_green_min=args.yellow_green_min,
             )
             return
 
@@ -309,6 +327,7 @@ def main():
                 args.clear_thresh,
                 args.red_margin,
                 args.yellow_clear,
+                args.yellow_green_min,
                 sample_count=args.sample_count,
                 sample_delay=args.sample_delay,
             )

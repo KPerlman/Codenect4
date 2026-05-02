@@ -6,12 +6,13 @@ def classify_color(r, g, b, clear):
     clear_thresh = 1786.7
     red_margin = 8.0
     yellow_clear = 1940.0
+    yellow_green_min = 900.0
 
     red_delta = r - max(g, b)
 
     if clear < clear_thresh:
         return "no piece"
-    if clear >= yellow_clear:
+    if clear >= yellow_clear and g >= yellow_green_min:
         return "yellow piece"
     if red_delta >= red_margin and r > g and r > b:
         return "red piece"

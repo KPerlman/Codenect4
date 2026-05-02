@@ -21,6 +21,7 @@ PICKUP_SETTLE = 0.6
 DETECT_SETTLE = 0.4
 DROP_SETTLE = 0.8
 DROP_HOLD = 1.0
+YELLOW_GREEN_MIN = 900.0
 
 
 def move_servo(pca, channel, angle, max_angle=180, offset=0):
@@ -151,6 +152,7 @@ def main():
     suggested_clear_thresh = None
     suggested_red_margin = None
     suggested_yellow_clear = None
+    suggested_yellow_green_min = YELLOW_GREEN_MIN
 
     if piece_clears and none_clears:
         piece_min = min(piece_clears)
@@ -184,6 +186,17 @@ def main():
             suggested_yellow_clear = min(yellow_clears)
             print(f"Suggested yellow clear threshold: {suggested_yellow_clear:.1f}")
 
+        yellow_greens = [s[1] for s in yellow_samples]
+        non_yellow_greens = [s[1] for s in red_samples + none_samples]
+        if non_yellow_greens:
+            suggested_yellow_green_min = (min(yellow_greens) + max(non_yellow_greens)) / 2.0
+            print(f"Suggested yellow green minimum: {suggested_yellow_green_min:.1f}")
+            if min(yellow_greens) <= max(non_yellow_greens):
+                print("Warning: yellow and non-yellow green ranges overlap; yellow separation may need tuning.")
+        else:
+            suggested_yellow_green_min = min(yellow_greens)
+            print(f"Suggested yellow green minimum: {suggested_yellow_green_min:.1f}")
+
     if (
         suggested_clear_thresh is not None
         and suggested_red_margin is not None
@@ -196,6 +209,7 @@ def main():
             f"--clear-thresh {suggested_clear_thresh:.1f} "
             f"--red-margin {suggested_red_margin:.1f} "
             f"--yellow-clear {suggested_yellow_clear:.1f} "
+            f"--yellow-green-min {suggested_yellow_green_min:.1f} "
             "--debug"
         )
 
