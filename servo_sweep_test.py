@@ -25,10 +25,10 @@ def main():
             for channel in range(7):
                 if channel == 6:
                     print("Servo 6 -> 270")
-                    move_servo(pca, channel, 270, max_angle=270, offset=OFFSETS[channel])
+                    move_servo(pca, channel, 90)
                     time.sleep(1)
                     print("Servo 6 -> 0")
-                    move_servo(pca, channel, 0, max_angle=270, offset=OFFSETS[channel])
+                    move_servo(pca, channel, 0)
                     time.sleep(1)
                 else:
                     print(f"Servo {channel} -> 90")
