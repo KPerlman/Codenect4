@@ -22,6 +22,7 @@ DETECT_SETTLE = 0.4
 DROP_SETTLE = 0.8
 DROP_HOLD = 1.0
 YELLOW_GREEN_MIN = 900.0
+YELLOW_RG_RATIO = 0.55
 
 
 def move_servo(pca, channel, angle, max_angle=180, offset=0):
@@ -153,6 +154,7 @@ def main():
     suggested_red_margin = None
     suggested_yellow_clear = None
     suggested_yellow_green_min = YELLOW_GREEN_MIN
+    suggested_yellow_rg_ratio = YELLOW_RG_RATIO
 
     if piece_clears and none_clears:
         piece_min = min(piece_clears)
@@ -187,7 +189,7 @@ def main():
             print(f"Suggested yellow clear threshold: {suggested_yellow_clear:.1f}")
 
         yellow_greens = [s[1] for s in yellow_samples]
-        non_yellow_greens = [s[1] for s in red_samples + none_samples]
+        non_yellow_greens = [s[1] for s in red_samples]
         if non_yellow_greens:
             suggested_yellow_green_min = (min(yellow_greens) + max(non_yellow_greens)) / 2.0
             print(f"Suggested yellow green minimum: {suggested_yellow_green_min:.1f}")
@@ -196,6 +198,19 @@ def main():
         else:
             suggested_yellow_green_min = min(yellow_greens)
             print(f"Suggested yellow green minimum: {suggested_yellow_green_min:.1f}")
+
+        yellow_green_ratios = [s[1] / max(s[0], 1.0) for s in yellow_samples]
+        non_yellow_green_ratios = [s[1] / max(s[0], 1.0) for s in red_samples]
+        if non_yellow_green_ratios:
+            suggested_yellow_rg_ratio = (
+                min(yellow_green_ratios) + max(non_yellow_green_ratios)
+            ) / 2.0
+            print(f"Suggested yellow g/r ratio minimum: {suggested_yellow_rg_ratio:.3f}")
+            if min(yellow_green_ratios) <= max(non_yellow_green_ratios):
+                print("Warning: yellow and non-yellow g/r ratio ranges overlap; yellow separation may need tuning.")
+        else:
+            suggested_yellow_rg_ratio = min(yellow_green_ratios)
+            print(f"Suggested yellow g/r ratio minimum: {suggested_yellow_rg_ratio:.3f}")
 
     if (
         suggested_clear_thresh is not None
@@ -210,6 +225,7 @@ def main():
             f"--red-margin {suggested_red_margin:.1f} "
             f"--yellow-clear {suggested_yellow_clear:.1f} "
             f"--yellow-green-min {suggested_yellow_green_min:.1f} "
+            f"--yellow-rg-ratio {suggested_yellow_rg_ratio:.3f} "
             "--debug"
         )
 

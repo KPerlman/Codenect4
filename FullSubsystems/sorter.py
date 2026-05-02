@@ -37,6 +37,7 @@ CLEAR_THRESH = 1786.7
 RED_MARGIN = 8.0
 YELLOW_CLEAR = 1940.0
 YELLOW_GREEN_MIN = 900.0
+YELLOW_RG_RATIO = 0.55
 
 
 def move_servo(pca, channel, angle, max_angle=180, offset=0):
@@ -51,19 +52,25 @@ def classify_color(
     red_margin,
     yellow_clear,
     yellow_green_min,
+    yellow_rg_ratio,
     sample_count=5,
     sample_delay=0.05,
 ):
     r, g, b, clear = read_sample(sensor, count=sample_count, delay_s=sample_delay)
     red_delta = r - max(g, b)
+    green_ratio = g / max(r, 1.0)
 
     if clear < clear_thresh:
-        return "none", (r, g, b, clear, red_delta)
-    if clear >= yellow_clear and g >= yellow_green_min:
-        return "yellow", (r, g, b, clear, red_delta)
+        return "none", (r, g, b, clear, red_delta, green_ratio)
+    if (
+        clear >= yellow_clear
+        and g >= yellow_green_min
+        and green_ratio >= yellow_rg_ratio
+    ):
+        return "yellow", (r, g, b, clear, red_delta, green_ratio)
     if red_delta >= red_margin and r > g and r > b:
-        return "red", (r, g, b, clear, red_delta)
-    return "none", (r, g, b, clear, red_delta)
+        return "red", (r, g, b, clear, red_delta, green_ratio)
+    return "none", (r, g, b, clear, red_delta, green_ratio)
 
 
 def read_sample(sensor, count=5, delay_s=0.05):
@@ -120,6 +127,7 @@ def calibrate_mode(
     red_margin,
     yellow_clear,
     yellow_green_min,
+    yellow_rg_ratio,
 ):
     red_samples = []
     yellow_samples = []
@@ -187,6 +195,7 @@ def calibrate_mode(
     suggested_red_margin = red_margin
     suggested_yellow_clear = yellow_clear
     suggested_yellow_green_min = yellow_green_min
+    suggested_yellow_rg_ratio = yellow_rg_ratio
 
     if piece_clears and none_clears:
         piece_min = min(piece_clears)
@@ -221,7 +230,7 @@ def calibrate_mode(
             print(f"Suggested yellow clear threshold: {suggested_yellow_clear:.1f}")
 
         yellow_greens = [s[1] for s in yellow_samples]
-        non_yellow_greens = [s[1] for s in red_samples + none_samples]
+        non_yellow_greens = [s[1] for s in red_samples]
         if non_yellow_greens:
             suggested_yellow_green_min = (min(yellow_greens) + max(non_yellow_greens)) / 2.0
             print(f"Suggested yellow green minimum: {suggested_yellow_green_min:.1f}")
@@ -231,6 +240,19 @@ def calibrate_mode(
             suggested_yellow_green_min = min(yellow_greens)
             print(f"Suggested yellow green minimum: {suggested_yellow_green_min:.1f}")
 
+        yellow_green_ratios = [s[1] / max(s[0], 1.0) for s in yellow_samples]
+        non_yellow_green_ratios = [s[1] / max(s[0], 1.0) for s in red_samples]
+        if non_yellow_green_ratios:
+            suggested_yellow_rg_ratio = (
+                min(yellow_green_ratios) + max(non_yellow_green_ratios)
+            ) / 2.0
+            print(f"Suggested yellow g/r ratio minimum: {suggested_yellow_rg_ratio:.3f}")
+            if min(yellow_green_ratios) <= max(non_yellow_green_ratios):
+                print("Warning: yellow and non-yellow g/r ratio ranges overlap; yellow separation may need tuning.")
+        else:
+            suggested_yellow_rg_ratio = min(yellow_green_ratios)
+            print(f"Suggested yellow g/r ratio minimum: {suggested_yellow_rg_ratio:.3f}")
+
     print("\nRun with:")
     print(
         "python3 FullSubsystems/sorter.py "
@@ -239,6 +261,7 @@ def calibrate_mode(
         f"--red-margin {suggested_red_margin:.1f} "
         f"--yellow-clear {suggested_yellow_clear:.1f} "
         f"--yellow-green-min {suggested_yellow_green_min:.1f} "
+        f"--yellow-rg-ratio {suggested_yellow_rg_ratio:.3f} "
         "--debug"
     )
 
@@ -265,6 +288,7 @@ def main():
     parser.add_argument("--red-margin", type=float, default=RED_MARGIN)
     parser.add_argument("--yellow-clear", type=float, default=YELLOW_CLEAR)
     parser.add_argument("--yellow-green-min", type=float, default=YELLOW_GREEN_MIN)
+    parser.add_argument("--yellow-rg-ratio", type=float, default=YELLOW_RG_RATIO)
     parser.add_argument("--pickup-settle", type=float, default=PICKUP_SETTLE)
     parser.add_argument("--detect-settle", type=float, default=DETECT_SETTLE)
     parser.add_argument("--drop-settle", type=float, default=DROP_SETTLE)
@@ -301,6 +325,7 @@ def main():
                 red_margin=args.red_margin,
                 yellow_clear=args.yellow_clear,
                 yellow_green_min=args.yellow_green_min,
+                yellow_rg_ratio=args.yellow_rg_ratio,
             )
             return
 
@@ -328,14 +353,16 @@ def main():
                 args.red_margin,
                 args.yellow_clear,
                 args.yellow_green_min,
+                args.yellow_rg_ratio,
                 sample_count=args.sample_count,
                 sample_delay=args.sample_delay,
             )
             if args.debug:
-                r, g, b, clear, red_delta = sample
+                r, g, b, clear, red_delta, green_ratio = sample
                 print(
                     f"Sample r={r:.1f} g={g:.1f} b={b:.1f} "
-                    f"clear={clear:.1f} red_delta={red_delta:.1f} -> {color}"
+                    f"clear={clear:.1f} red_delta={red_delta:.1f} "
+                    f"g/r={green_ratio:.3f} -> {color}"
                 )
             if color == "red":
                 if args.debug:
