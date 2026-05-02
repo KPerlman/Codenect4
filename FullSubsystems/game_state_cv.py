@@ -65,9 +65,14 @@ def choose_camera(preferred_index=None, preferred_device=None, max_check=5, widt
     return ordered
 
 
+def user_visible_column(board_state, column):
+    return board_state.shape[1] - 1 - column
+
+
 def board_to_text(board_state):
-    lines = ["0 1 2 3 4 5 6"]
-    for row in board_state:
+    mirrored = np.fliplr(board_state)
+    lines = ["6 5 4 3 2 1 0"]
+    for row in mirrored:
         lines.append(" ".join(PIECE_MAP[int(cell)] for cell in row))
     return "\n".join(lines)
 
@@ -329,9 +334,18 @@ def compute_ai_move(board_state, depth):
 
 
 def print_ai_instruction(column, score, expected_board):
-    print(f"\nComputer move: place a RED piece in column {column} (score={score}).")
+    print(
+        "\nComputer move: place a RED piece in column "
+        f"{user_visible_column(expected_board, column)} (score={score})."
+    )
     print("Expected board after RED move:")
     print(board_to_text(expected_board))
+
+
+def accept_confirmed_ai_move(confirmed_board, ai_expected_board):
+    confirmed_board = np.copy(ai_expected_board)
+    print("\nRED move accepted on user confirmation. Your turn again.")
+    return confirmed_board
 
 
 def open_camera(source, width, height):
@@ -665,7 +679,20 @@ def main():
 
                             print_ai_instruction(ai_move_col, score, ai_expected_board)
                             input("Place the RED piece there, then press Enter to continue...")
-                            game_state = "waiting_ai_confirmation"
+                            confirmed_board = accept_confirmed_ai_move(confirmed_board, ai_expected_board)
+                            if board_winner(confirmed_board) == AI_PIECE:
+                                print("\nRED wins.")
+                                break
+                            if board_full(confirmed_board):
+                                print("\nBoard is full. Draw.")
+                                break
+                            illegal_notice = None
+                            ai_illegal_retries = 0
+                            last_rejected_ai_board = None
+                            last_ai_inference_key = None
+                            ai_inference_hold = 0
+                            stable_printed_board = None
+                            game_state = "waiting_human"
                             waiting_ai_notice = False
                         elif not boards_equal(confirmed_board, stable_board):
                             if message != illegal_notice:
@@ -719,7 +746,20 @@ def main():
 
                                     print_ai_instruction(ai_move_col, score, ai_expected_board)
                                     input("Place the RED piece there, then press Enter to continue...")
-                                    game_state = "waiting_ai_confirmation"
+                                    confirmed_board = accept_confirmed_ai_move(confirmed_board, ai_expected_board)
+                                    if board_winner(confirmed_board) == AI_PIECE:
+                                        print("\nRED wins.")
+                                        break
+                                    if board_full(confirmed_board):
+                                        print("\nBoard is full. Draw.")
+                                        break
+                                    illegal_notice = None
+                                    ai_illegal_retries = 0
+                                    last_rejected_ai_board = None
+                                    last_ai_inference_key = None
+                                    ai_inference_hold = 0
+                                    stable_printed_board = None
+                                    game_state = "waiting_human"
                                     waiting_ai_notice = False
                                     continue
 
@@ -748,108 +788,19 @@ def main():
 
                                     print_ai_instruction(ai_move_col, score, ai_expected_board)
                                     input("Place the RED piece there, then press Enter to continue...")
-                                    game_state = "waiting_ai_confirmation"
-                                    waiting_ai_notice = False
-                    elif game_state == "waiting_ai_confirmation":
-                        if boards_equal(stable_board, ai_expected_board):
-                            is_legal, message = legal_ai_transition(confirmed_board, stable_board)
-                            if not is_legal:
-                                if message != illegal_notice:
-                                    print(f"\nIgnoring illegal board update on RED's turn: {message}")
-                                    print("This usually means at least one real piece has been played, but vision is uncertain.")
-                                    illegal_notice = message
-                                if not boards_equal(stable_board, last_rejected_ai_board):
-                                    ai_illegal_retries += 1
-                                    last_rejected_ai_board = np.copy(stable_board)
-                                continue
-                            confirmed_board = np.copy(stable_board)
-                            illegal_notice = None
-                            ai_illegal_retries = 0
-                            last_rejected_ai_board = None
-                            last_ai_inference_key = None
-                            ai_inference_hold = 0
-                            print(message)
-                            if board_winner(confirmed_board) == AI_PIECE:
-                                print("\nRED wins.")
-                                break
-                            if board_full(confirmed_board):
-                                print("\nBoard is full. Draw.")
-                                break
-                            print("\nRED move confirmed by vision. Your turn again.")
-                            game_state = "waiting_human"
-                        elif not boards_equal(confirmed_board, stable_board):
-                            if not boards_equal(stable_board, last_rejected_ai_board):
-                                ai_illegal_retries += 1
-                                last_rejected_ai_board = np.copy(stable_board)
-                            inferred = infer_most_likely_move(confirmed_board, stable_board, AI_PIECE)
-                            if not waiting_ai_notice:
-                                print(
-                                    "\nWaiting for the RED piece to appear in the expected column. "
-                                    "If the board does not match, adjust the piece and hold still."
-                                )
-                                waiting_ai_notice = True
-
-                            if inferred is not None:
-                                inference_key = (
-                                    inferred["column"],
-                                    inferred["distance"],
-                                    inferred["second_distance"],
-                                    inferred["confident"],
-                                )
-                                if inference_key == last_ai_inference_key:
-                                    ai_inference_hold += 1
-                                else:
-                                    last_ai_inference_key = inference_key
-                                    ai_inference_hold = 1
-                                    print(
-                                        "Most likely RED move guess: "
-                                        f"column {inferred['column']} "
-                                        f"(distance={inferred['distance']}, "
-                                        f"second={inferred['second_distance']}, "
-                                        f"confident={inferred['confident']})"
-                                    )
-
-                                if (
-                                    inferred["confident"]
-                                    and inferred["column"] == ai_move_col
-                                    and ai_inference_hold >= args.inference_hold
-                                ):
-                                    confirmed_board = np.copy(ai_expected_board)
-                                    illegal_notice = None
-                                    ai_illegal_retries = 0
-                                    last_rejected_ai_board = None
-                                    last_ai_inference_key = None
-                                    ai_inference_hold = 0
-                                    print(f"Accepting inferred RED move in column {ai_move_col}.")
+                                    confirmed_board = accept_confirmed_ai_move(confirmed_board, ai_expected_board)
                                     if board_winner(confirmed_board) == AI_PIECE:
                                         print("\nRED wins.")
                                         break
                                     if board_full(confirmed_board):
                                         print("\nBoard is full. Draw.")
                                         break
-                                    print("\nRED move confirmed by inference. Your turn again.")
-                                    game_state = "waiting_human"
-                                    waiting_ai_notice = False
-                                    continue
-
-                            if ai_illegal_retries >= args.illegal_retries:
-                                manual = prompt_manual_move(confirmed_board, AI_PIECE, "RED")
-                                if manual is not None:
-                                    manual_col, manual_board = manual
-                                    confirmed_board = manual_board
                                     illegal_notice = None
                                     ai_illegal_retries = 0
                                     last_rejected_ai_board = None
                                     last_ai_inference_key = None
                                     ai_inference_hold = 0
-                                    print(f"Manual RED move recorded in column {manual_col}.")
-                                    if board_winner(confirmed_board) == AI_PIECE:
-                                        print("\nRED wins.")
-                                        break
-                                    if board_full(confirmed_board):
-                                        print("\nBoard is full. Draw.")
-                                        break
-                                    print("\nRED move manually confirmed. Your turn again.")
+                                    stable_printed_board = None
                                     game_state = "waiting_human"
                                     waiting_ai_notice = False
 
