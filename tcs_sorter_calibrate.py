@@ -1,8 +1,32 @@
 import time
 import board
 import busio
-import adafruit_tcs34725
-import adafruit_bitbangio as bitbangio
+from adafruit_pca9685 import PCA9685
+from tcs_bus import open_tcs34725
+
+
+SERVO_CHANNEL = 6
+MAX_ANGLE = 270
+PULSE_MIN = 500
+PULSE_MAX = 2500
+OFFSET = 0
+
+PLAYER_DROP = 0
+RIGHT_PICKUP = 85
+LEFT_PICKUP = 165
+DETECT = 200
+ROBOT_DROP = 270
+
+PICKUP_SETTLE = 0.6
+DETECT_SETTLE = 0.4
+DROP_SETTLE = 0.8
+DROP_HOLD = 1.0
+
+
+def move_servo(pca, channel, angle, max_angle=180, offset=0):
+    corrected_angle = max(0, min(max_angle, angle + offset))
+    pulse = PULSE_MIN + (corrected_angle / float(max_angle)) * (PULSE_MAX - PULSE_MIN)
+    pca.channels[channel].duty_cycle = int(pulse / 20000 * 65535)
 
 
 def read_sample(sensor, count=5, delay_s=0.05):
@@ -48,24 +72,35 @@ def summarize(label, samples):
 
 
 def main():
-    try:
-        i2c = busio.I2C(board.D17, board.D27)
-    except ValueError:
-        i2c = bitbangio.I2C(board.D27, board.D17)
+    i2c_pca = busio.I2C(board.SCL, board.SDA)
+    pca = PCA9685(i2c_pca)
+    pca.frequency = 50
 
-    sensor = adafruit_tcs34725.TCS34725(i2c)
-    sensor.integration_time = 100
-    sensor.gain = 4
+    sensor = open_tcs34725(3, integration_time_ms=100, gain=4)
 
     red_samples = []
     yellow_samples = []
     none_samples = []
 
-    print("TCS34725 sorter calibration on GPIO17/27")
-    print("Label each sample: r=red, y=yellow, n=none, q=quit")
+    next_pickup_right = True
+
+    print("Sorter calibration: label each detection while paused at DETECT.")
+    print("Labels: r=red, y=yellow, n=none, q=quit")
 
     try:
+        move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+        time.sleep(1.0)
+
         while True:
+            pickup_angle = RIGHT_PICKUP if next_pickup_right else LEFT_PICKUP
+            next_pickup_right = not next_pickup_right
+
+            move_servo(pca, SERVO_CHANNEL, pickup_angle, max_angle=MAX_ANGLE, offset=OFFSET)
+            time.sleep(PICKUP_SETTLE)
+
+            move_servo(pca, SERVO_CHANNEL, DETECT, max_angle=MAX_ANGLE, offset=OFFSET)
+            time.sleep(DETECT_SETTLE)
+
             label = input("Label [r/y/n/q]: ").strip().lower()
             if label == "q":
                 break
@@ -78,12 +113,23 @@ def main():
 
             if label == "r":
                 red_samples.append((r, g, b, clear))
+                move_servo(pca, SERVO_CHANNEL, ROBOT_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+                time.sleep(DROP_SETTLE)
+                time.sleep(DROP_HOLD)
             elif label == "y":
                 yellow_samples.append((r, g, b, clear))
+                move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+                time.sleep(DROP_SETTLE)
+                time.sleep(DROP_HOLD)
             else:
                 none_samples.append((r, g, b, clear))
+                move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+                time.sleep(DROP_SETTLE)
+                time.sleep(DROP_HOLD)
+
     finally:
-        pass
+        move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+        pca.deinit()
 
     red_stats = summarize("red", red_samples)
     yellow_stats = summarize("yellow", yellow_samples)
@@ -101,7 +147,6 @@ def main():
             f"clear_range=({stats['c_min']:.1f}-{stats['c_max']:.1f})"
         )
 
-    # Suggested thresholds
     piece_clears = [s[3] for s in red_samples + yellow_samples]
     none_clears = [s[3] for s in none_samples]
     if piece_clears and none_clears:
