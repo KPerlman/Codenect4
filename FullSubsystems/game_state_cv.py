@@ -13,6 +13,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from connect4_vision import Connect4Tracker, list_available_cameras
+from minimax import Minimax
 
 
 PIECE_MAP = {
@@ -20,6 +21,9 @@ PIECE_MAP = {
     1: "R",
     2: "Y",
 }
+
+AI_PIECE = 1
+HUMAN_PIECE = 2
 
 
 def is_linux():
@@ -38,20 +42,23 @@ def choose_camera(preferred_index=None, preferred_device=None, max_check=5, widt
     working_cams = list_available_cameras(max_check=max_check)
     if not working_cams:
         print("No cameras found during scan. Falling back to camera 0.")
-        return [0]
+        return ["/dev/video0"] if is_linux() else [0]
 
     scored = []
     for idx in working_cams:
-        score = probe_camera(index=idx, width=width, height=height)
+        source = f"/dev/video{idx}" if is_linux() else idx
+        score = probe_camera(source=source, width=width, height=height)
         if score > 0:
-            scored.append((score, idx))
+            scored.append((score, source))
 
     if not scored:
         print(f"Cameras found: {working_cams}")
+        if is_linux():
+            return [f"/dev/video{idx}" for idx in working_cams]
         return working_cams
 
     scored.sort(key=lambda item: (-item[0], item[1]))
-    ordered = [idx for _, idx in scored]
+    ordered = [source for _, source in scored]
     print(f"Camera candidates by stability: {ordered}")
     if len(ordered) == 1:
         print(f"Auto-selecting camera {ordered[0]}")
@@ -89,6 +96,100 @@ def boards_equal(left, right):
     if left is None or right is None:
         return False
     return np.array_equal(left, right)
+
+
+def count_piece(board_state, piece):
+    return int(np.count_nonzero(board_state == piece))
+
+
+def board_full(board_state):
+    return not np.any(board_state == 0)
+
+
+def board_winner(board_state):
+    rows, cols = board_state.shape
+
+    for r in range(rows):
+        for c in range(cols - 3):
+            val = int(board_state[r, c])
+            if val != 0 and all(int(board_state[r, c + offset]) == val for offset in range(4)):
+                return val
+
+    for r in range(rows - 3):
+        for c in range(cols):
+            val = int(board_state[r, c])
+            if val != 0 and all(int(board_state[r + offset, c]) == val for offset in range(4)):
+                return val
+
+    for r in range(rows - 3):
+        for c in range(cols - 3):
+            val = int(board_state[r, c])
+            if val != 0 and all(int(board_state[r + offset, c + offset]) == val for offset in range(4)):
+                return val
+
+    for r in range(3, rows):
+        for c in range(cols - 3):
+            val = int(board_state[r, c])
+            if val != 0 and all(int(board_state[r - offset, c + offset]) == val for offset in range(4)):
+                return val
+
+    return 0
+
+
+def is_single_piece_addition(previous_board, current_board, piece):
+    if previous_board is None or current_board is None:
+        return False
+
+    diffs = np.argwhere(previous_board != current_board)
+    if len(diffs) != 1:
+        return False
+
+    row, col = diffs[0]
+    return previous_board[row, col] == 0 and current_board[row, col] == piece
+
+
+def vision_board_to_minimax(board_state):
+    char_board = []
+    for r in range(board_state.shape[0] - 1, -1, -1):
+        row = []
+        for c in range(board_state.shape[1]):
+            value = int(board_state[r, c])
+            if value == AI_PIECE:
+                row.append("x")
+            elif value == HUMAN_PIECE:
+                row.append("o")
+            else:
+                row.append(" ")
+        char_board.append(row)
+    return char_board
+
+
+def minimax_board_to_vision(char_board):
+    board = np.zeros((6, 7), dtype=int)
+    for mr, row in enumerate(char_board):
+        vr = 5 - mr
+        for c, value in enumerate(row):
+            if value == "x":
+                board[vr, c] = AI_PIECE
+            elif value == "o":
+                board[vr, c] = HUMAN_PIECE
+    return board
+
+
+def compute_ai_move(board_state, depth):
+    minimax_board = vision_board_to_minimax(board_state)
+    solver = Minimax(minimax_board)
+    move, score = solver.bestMove(depth, minimax_board, "x")
+    if move is None:
+        return None, None, score
+    expected_board = solver.makeMove(minimax_board, move, "x")
+    return move, minimax_board_to_vision(expected_board), score
+
+
+def print_ai_instruction(column, score, expected_board):
+    print(f"\nComputer move: place a RED piece in column {column} (score={score}).")
+    print("Expected board after RED move:")
+    print(board_to_text(expected_board))
 
 
 def open_camera(source, width, height):
@@ -216,6 +317,23 @@ def main():
         default=5,
         help="How many consecutive failed reads to tolerate before reopening the camera.",
     )
+    parser.add_argument(
+        "--play-vs-ai",
+        action="store_true",
+        help="Play as YELLOW against the computer using the webcam-tracked board state.",
+    )
+    parser.add_argument(
+        "--depth",
+        type=int,
+        default=5,
+        help="Minimax search depth for AI move selection.",
+    )
+    parser.add_argument(
+        "--state-streak",
+        type=int,
+        default=3,
+        help="How many identical tracker states in a row are required before game logic accepts a board update.",
+    )
     args = parser.parse_args()
 
     if args.show and not os.environ.get("DISPLAY"):
@@ -242,6 +360,16 @@ def main():
     last_fps_time = time.time()
     remaining_candidates = [source for source in camera_candidates if source != camera_index]
     failed_reads = 0
+    last_seen_board = None
+    stable_streak = 0
+    stable_board = None
+    stable_printed_board = None
+    confirmed_board = None
+    game_state = "waiting_human"
+    ai_expected_board = None
+    ai_move_col = None
+    calibration_announced = False
+    waiting_ai_notice = False
 
     warmup_camera(cap)
 
@@ -283,13 +411,75 @@ def main():
 
             frame_out, mask, warped = tracker.process_frame(frame)
             board_copy = np.copy(tracker.board_state)
-            should_print = args.print_every_frame or not boards_equal(board_copy, last_printed_board)
-            should_print = should_print or tracker.winner != last_printed_winner
+            if boards_equal(board_copy, last_seen_board):
+                stable_streak += 1
+            else:
+                last_seen_board = np.copy(board_copy)
+                stable_streak = 1
 
-            if should_print:
-                print_board_state(board_copy, tracker.winner, tracker)
-                last_printed_board = board_copy
-                last_printed_winner = tracker.winner
+            if stable_streak >= args.state_streak:
+                stable_board = np.copy(board_copy)
+
+            if not args.play_vs_ai:
+                should_print = args.print_every_frame or not boards_equal(board_copy, last_printed_board)
+                should_print = should_print or tracker.winner != last_printed_winner
+
+                if should_print:
+                    print_board_state(board_copy, tracker.winner, tracker)
+                    last_printed_board = board_copy
+                    last_printed_winner = tracker.winner
+            else:
+                if not tracker.is_calibrated:
+                    if not calibration_announced:
+                        print("Waiting for tracker calibration before starting play...")
+                        calibration_announced = True
+                elif stable_board is not None:
+                    if confirmed_board is None:
+                        confirmed_board = np.copy(stable_board)
+                        print_board_state(confirmed_board, tracker.winner, tracker)
+                        print("\nYou are YELLOW and go first.")
+                        print("Make your move on the real board. The script will detect it automatically.")
+                        stable_printed_board = np.copy(confirmed_board)
+                    elif not boards_equal(stable_board, stable_printed_board):
+                        print_board_state(stable_board, tracker.winner, tracker)
+                        stable_printed_board = np.copy(stable_board)
+
+                    if game_state == "waiting_human":
+                        if is_single_piece_addition(confirmed_board, stable_board, HUMAN_PIECE):
+                            confirmed_board = np.copy(stable_board)
+                            if board_winner(confirmed_board) == HUMAN_PIECE:
+                                print("\nYELLOW wins.")
+                                break
+                            if board_full(confirmed_board):
+                                print("\nBoard is full. Draw.")
+                                break
+
+                            ai_move_col, ai_expected_board, score = compute_ai_move(confirmed_board, args.depth)
+                            if ai_move_col is None or ai_expected_board is None:
+                                print("\nNo legal AI move found. Game over.")
+                                break
+
+                            print_ai_instruction(ai_move_col, score, ai_expected_board)
+                            input("Place the RED piece there, then press Enter to continue...")
+                            game_state = "waiting_ai_confirmation"
+                            waiting_ai_notice = False
+                    elif game_state == "waiting_ai_confirmation":
+                        if boards_equal(stable_board, ai_expected_board):
+                            confirmed_board = np.copy(stable_board)
+                            if board_winner(confirmed_board) == AI_PIECE:
+                                print("\nRED wins.")
+                                break
+                            if board_full(confirmed_board):
+                                print("\nBoard is full. Draw.")
+                                break
+                            print("\nRED move confirmed by vision. Your turn again.")
+                            game_state = "waiting_human"
+                        elif not waiting_ai_notice:
+                            print(
+                                "\nWaiting for the RED piece to appear in the expected column. "
+                                "If the board does not match, adjust the piece and hold still."
+                            )
+                            waiting_ai_notice = True
 
             if args.show:
                 try:

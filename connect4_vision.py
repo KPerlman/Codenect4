@@ -211,11 +211,11 @@ class Connect4Tracker:
                 if self.calibration_frames > 30:
                     self.perform_calibration(warped)
                     self.is_calibrated = True
+                    self.reset_detection_state()
             else:
                 cv2.putText(frame, "CALIBRATED", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-            self.analyze_grid(warped)
-            self.winner = self.check_for_win()
+                self.analyze_grid(warped)
+                self.winner = self.check_for_win()
 
             warped_display = warped.copy()
             self.draw_grid_debug(warped_display)
@@ -240,6 +240,14 @@ class Connect4Tracker:
                 roi = warped_img[y1:y2, x1:x2]
                 avg_color = np.average(np.average(roi, axis=0), axis=0)
                 self.baseline_colors[r, c] = avg_color
+
+    def reset_detection_state(self):
+        # Start post-calibration detection from a clean slate so
+        # pre-calibration false positives do not persist as real pieces.
+        self.board_state = np.zeros((self.grid_rows, self.grid_cols), dtype=int)
+        self.detection_buffer = np.zeros((self.grid_rows, self.grid_cols), dtype=int)
+        self.current_candidate = np.zeros((self.grid_rows, self.grid_cols), dtype=int)
+        self.winner = 0
 
     def analyze_grid(self, warped_img):
         height, width, _ = warped_img.shape
