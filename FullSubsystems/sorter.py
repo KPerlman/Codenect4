@@ -57,10 +57,10 @@ def classify_color(
 
     if clear < clear_thresh:
         return "none", (r, g, b, clear, red_delta)
+    if clear >= yellow_clear:
+        return "yellow", (r, g, b, clear, red_delta)
     if red_delta >= red_margin and r > g and r > b:
         return "red", (r, g, b, clear, red_delta)
-    if clear >= yellow_clear and g >= b:
-        return "yellow", (r, g, b, clear, red_delta)
     return "none", (r, g, b, clear, red_delta)
 
 
@@ -180,11 +180,15 @@ def calibrate_mode(
 
     piece_clears = [s[3] for s in red_samples + yellow_samples]
     none_clears = [s[3] for s in none_samples]
+    suggested_clear_thresh = clear_thresh
+    suggested_red_margin = red_margin
+    suggested_yellow_clear = yellow_clear
+
     if piece_clears and none_clears:
         piece_min = min(piece_clears)
         none_max = max(none_clears)
-        clear_thresh = (piece_min + none_max) / 2.0
-        print(f"\nSuggested clear threshold: {clear_thresh:.1f}")
+        suggested_clear_thresh = (piece_min + none_max) / 2.0
+        print(f"\nSuggested clear threshold: {suggested_clear_thresh:.1f}")
         if piece_min <= none_max:
             print("Warning: clear ranges overlap; adjust lighting or use color margins.")
 
@@ -192,23 +196,35 @@ def calibrate_mode(
         red_margins = [s[0] - max(s[1], s[2]) for s in red_samples]
         none_red_margins = [s[0] - max(s[1], s[2]) for s in none_samples]
         if none_red_margins:
-            red_margin = (min(red_margins) + max(none_red_margins)) / 2.0
-            print(f"Suggested red margin (r - max(g,b)): {red_margin:.1f}")
+            suggested_red_margin = (min(red_margins) + max(none_red_margins)) / 2.0
+            print(f"Suggested red margin (r - max(g,b)): {suggested_red_margin:.1f}")
             if min(red_margins) <= max(none_red_margins):
                 print("Warning: red and none red-margin ranges overlap; red separation may need tuning.")
         else:
-            print(f"Suggested red margin (r - max(g,b)): {min(red_margins):.1f}")
+            suggested_red_margin = min(red_margins)
+            print(f"Suggested red margin (r - max(g,b)): {suggested_red_margin:.1f}")
 
     if yellow_samples:
         yellow_clears = [s[3] for s in yellow_samples]
         non_yellow_piece_clears = [s[3] for s in red_samples]
         if non_yellow_piece_clears:
-            yellow_clear = (min(yellow_clears) + max(non_yellow_piece_clears)) / 2.0
-            print(f"Suggested yellow clear threshold: {yellow_clear:.1f}")
+            suggested_yellow_clear = (min(yellow_clears) + max(non_yellow_piece_clears)) / 2.0
+            print(f"Suggested yellow clear threshold: {suggested_yellow_clear:.1f}")
             if min(yellow_clears) <= max(non_yellow_piece_clears):
                 print("Warning: red and yellow clear ranges overlap; yellow separation may need tuning.")
         else:
-            print(f"Suggested yellow clear threshold: {min(yellow_clears):.1f}")
+            suggested_yellow_clear = min(yellow_clears)
+            print(f"Suggested yellow clear threshold: {suggested_yellow_clear:.1f}")
+
+    print("\nRun with:")
+    print(
+        "python3 FullSubsystems/sorter.py "
+        f"--sensor-bus 3 "
+        f"--clear-thresh {suggested_clear_thresh:.1f} "
+        f"--red-margin {suggested_red_margin:.1f} "
+        f"--yellow-clear {suggested_yellow_clear:.1f} "
+        "--debug"
+    )
 
 
 def agitate(pca, base_angle):

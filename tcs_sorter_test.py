@@ -11,10 +11,10 @@ def classify_color(r, g, b, clear):
 
     if clear < clear_thresh:
         return "no piece"
+    if clear >= yellow_clear:
+        return "yellow piece"
     if red_delta >= red_margin and r > g and r > b:
         return "red piece"
-    if clear >= yellow_clear and g >= b:
-        return "yellow piece"
     return "no piece"
 
 
