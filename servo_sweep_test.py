@@ -23,7 +23,7 @@ def main():
     try:
         while True:
             for channel in range(7):
-                if channel == 3:
+                if channel == 6:
                     print("Servo 6 -> 270")
                     move_servo(pca, channel, 270)
                     time.sleep(1)
