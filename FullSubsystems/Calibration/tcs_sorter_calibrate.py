@@ -123,7 +123,7 @@ def main():
                 time.sleep(DROP_HOLD)
             else:
                 none_samples.append((r, g, b, clear))
-                move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+                move_servo(pca, SERVO_CHANNEL, pickup_angle, max_angle=MAX_ANGLE, offset=OFFSET)
                 time.sleep(DROP_SETTLE)
                 time.sleep(DROP_HOLD)
 
@@ -162,8 +162,15 @@ def main():
         print(f"Suggested red margin (r - max(g,b)): {min(red_margins):.1f}")
 
     if yellow_samples:
-        yellow_margins = [s[1] - max(s[0], s[2]) for s in yellow_samples]
-        print(f"Suggested yellow margin (g - max(r,b)): {min(yellow_margins):.1f}")
+        yellow_clears = [s[3] for s in yellow_samples]
+        non_yellow_piece_clears = [s[3] for s in red_samples]
+        if non_yellow_piece_clears:
+            yellow_clear = (min(yellow_clears) + max(non_yellow_piece_clears)) / 2.0
+            print(f"Suggested yellow clear threshold: {yellow_clear:.1f}")
+            if min(yellow_clears) <= max(non_yellow_piece_clears):
+                print("Warning: red and yellow clear ranges overlap; yellow separation may need tuning.")
+        else:
+            print(f"Suggested yellow clear threshold: {min(yellow_clears):.1f}")
 
 
 if __name__ == "__main__":

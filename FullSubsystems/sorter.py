@@ -1,3 +1,4 @@
+import argparse
 import time
 import sys
 from pathlib import Path
@@ -33,7 +34,7 @@ AGITATE_SWINGS = 4
 AGITATE_DELTA = 12
 
 CLEAR_THRESH = 1786.7
-RED_MARGIN = 1.0
+RED_MARGIN = 8.0
 YELLOW_CLEAR = 1940.0
 
 
@@ -43,17 +44,165 @@ def move_servo(pca, channel, angle, max_angle=180, offset=0):
     pca.channels[channel].duty_cycle = int(pulse / 20000 * 65535)
 
 
-def classify_color(sensor):
-    r, g, b = sensor.color_rgb_bytes
-    _, _, _, clear = sensor.color_raw
+def classify_color(
+    sensor,
+    clear_thresh,
+    red_margin,
+    yellow_clear,
+    sample_count=5,
+    sample_delay=0.05,
+):
+    r, g, b, clear = read_sample(sensor, count=sample_count, delay_s=sample_delay)
+    red_delta = r - max(g, b)
 
-    if clear < CLEAR_THRESH:
-        return "none"
-    if clear >= YELLOW_CLEAR:
-        return "yellow"
-    if r - max(g, b) >= RED_MARGIN:
-        return "red"
-    return "none"
+    if clear < clear_thresh:
+        return "none", (r, g, b, clear, red_delta)
+    if clear >= yellow_clear:
+        return "yellow", (r, g, b, clear, red_delta)
+    if red_delta >= red_margin and r > g and r > b:
+        return "red", (r, g, b, clear, red_delta)
+    return "none", (r, g, b, clear, red_delta)
+
+
+def read_sample(sensor, count=5, delay_s=0.05):
+    r_total = g_total = b_total = c_total = 0
+    for _ in range(count):
+        r, g, b = sensor.color_rgb_bytes
+        _, _, _, clear = sensor.color_raw
+        r_total += r
+        g_total += g
+        b_total += b
+        c_total += clear
+        time.sleep(delay_s)
+    return (
+        r_total / count,
+        g_total / count,
+        b_total / count,
+        c_total / count,
+    )
+
+
+def summarize(label, samples):
+    if not samples:
+        return None
+    rs = [s[0] for s in samples]
+    gs = [s[1] for s in samples]
+    bs = [s[2] for s in samples]
+    cs = [s[3] for s in samples]
+    return {
+        "count": len(samples),
+        "r_avg": sum(rs) / len(rs),
+        "g_avg": sum(gs) / len(gs),
+        "b_avg": sum(bs) / len(bs),
+        "c_avg": sum(cs) / len(cs),
+        "r_min": min(rs),
+        "g_min": min(gs),
+        "b_min": min(bs),
+        "c_min": min(cs),
+        "r_max": max(rs),
+        "g_max": max(gs),
+        "b_max": max(bs),
+        "c_max": max(cs),
+    }
+
+
+def calibrate_mode(
+    pca,
+    sensor,
+    pickup_settle,
+    detect_settle,
+    drop_settle,
+    drop_hold,
+    sample_count,
+    sample_delay,
+    clear_thresh,
+    red_margin,
+    yellow_clear,
+):
+    red_samples = []
+    yellow_samples = []
+    none_samples = []
+    next_pickup_right = True
+
+    print("Sorter calibration: label each detection while paused at DETECT.")
+    print("Labels: r=red, y=yellow, n=none, q=quit")
+
+    while True:
+        pickup_angle = RIGHT_PICKUP if next_pickup_right else LEFT_PICKUP
+        next_pickup_right = not next_pickup_right
+
+        move_servo(pca, SERVO_CHANNEL, pickup_angle, max_angle=MAX_ANGLE, offset=OFFSET)
+        time.sleep(pickup_settle)
+
+        move_servo(pca, SERVO_CHANNEL, DETECT, max_angle=MAX_ANGLE, offset=OFFSET)
+        time.sleep(detect_settle)
+
+        label = input("Label [r/y/n/q]: ").strip().lower()
+        if label == "q":
+            break
+        if label not in {"r", "y", "n"}:
+            print("Use r, y, n, or q.")
+            continue
+
+        r, g, b, clear = read_sample(sensor, count=sample_count, delay_s=sample_delay)
+        print(f"Sample r={r:.1f} g={g:.1f} b={b:.1f} clear={clear:.1f}")
+
+        if label == "r":
+            red_samples.append((r, g, b, clear))
+            move_servo(pca, SERVO_CHANNEL, ROBOT_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+            time.sleep(drop_settle)
+            time.sleep(drop_hold)
+        elif label == "y":
+            yellow_samples.append((r, g, b, clear))
+            move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+            time.sleep(drop_settle)
+            time.sleep(drop_hold)
+        else:
+            none_samples.append((r, g, b, clear))
+            move_servo(pca, SERVO_CHANNEL, pickup_angle, max_angle=MAX_ANGLE, offset=OFFSET)
+            time.sleep(drop_settle)
+            time.sleep(drop_hold)
+
+    red_stats = summarize("red", red_samples)
+    yellow_stats = summarize("yellow", yellow_samples)
+    none_stats = summarize("none", none_samples)
+
+    print("\n--- Summary ---")
+    for name, stats in [("red", red_stats), ("yellow", yellow_stats), ("none", none_stats)]:
+        if not stats:
+            print(f"{name}: no samples")
+            continue
+        print(
+            f"{name}: count={stats['count']} "
+            f"avg(r,g,b,c)=({stats['r_avg']:.1f},{stats['g_avg']:.1f},"
+            f"{stats['b_avg']:.1f},{stats['c_avg']:.1f}) "
+            f"clear_range=({stats['c_min']:.1f}-{stats['c_max']:.1f})"
+        )
+
+    piece_clears = [s[3] for s in red_samples + yellow_samples]
+    none_clears = [s[3] for s in none_samples]
+    if piece_clears and none_clears:
+        piece_min = min(piece_clears)
+        none_max = max(none_clears)
+        clear_thresh = (piece_min + none_max) / 2.0
+        print(f"\nSuggested clear threshold: {clear_thresh:.1f}")
+        if piece_min <= none_max:
+            print("Warning: clear ranges overlap; adjust lighting or use color margins.")
+
+    if red_samples:
+        red_margins = [s[0] - max(s[1], s[2]) for s in red_samples]
+        print(f"Suggested red margin (r - max(g,b)): {min(red_margins):.1f}")
+
+    if yellow_samples:
+        yellow_clears = [s[3] for s in yellow_samples]
+        non_yellow_piece_clears = [s[3] for s in red_samples]
+        if non_yellow_piece_clears:
+            yellow_clear = (min(yellow_clears) + max(non_yellow_piece_clears)) / 2.0
+            print(f"Suggested yellow clear threshold: {yellow_clear:.1f}")
+            if min(yellow_clears) <= max(non_yellow_piece_clears):
+                print("Warning: red and yellow clear ranges overlap; yellow separation may need tuning.")
+        else:
+            print(f"Suggested yellow clear threshold: {min(yellow_clears):.1f}")
 
 
 def agitate(pca, base_angle):
@@ -66,6 +215,20 @@ def agitate(pca, base_angle):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Sorter control / calibration")
+    parser.add_argument("--calibrate", action="store_true", help="Run interactive calibration mode")
+    parser.add_argument("--clear-thresh", type=float, default=CLEAR_THRESH)
+    parser.add_argument("--red-margin", type=float, default=RED_MARGIN)
+    parser.add_argument("--yellow-clear", type=float, default=YELLOW_CLEAR)
+    parser.add_argument("--pickup-settle", type=float, default=PICKUP_SETTLE)
+    parser.add_argument("--detect-settle", type=float, default=DETECT_SETTLE)
+    parser.add_argument("--drop-settle", type=float, default=DROP_SETTLE)
+    parser.add_argument("--drop-hold", type=float, default=DROP_HOLD)
+    parser.add_argument("--sample-count", type=int, default=5)
+    parser.add_argument("--sample-delay", type=float, default=0.05)
+    parser.add_argument("--debug", action="store_true", help="Print step-by-step moves")
+    args = parser.parse_args()
+
     i2c_pca = busio.I2C(board.SCL, board.SDA)
 
     pca = PCA9685(i2c_pca)
@@ -79,32 +242,73 @@ def main():
         move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
         time.sleep(1.0)
 
+        if args.calibrate:
+            calibrate_mode(
+                pca,
+                sensor,
+                pickup_settle=args.pickup_settle,
+                detect_settle=args.detect_settle,
+                drop_settle=args.drop_settle,
+                drop_hold=args.drop_hold,
+                sample_count=args.sample_count,
+                sample_delay=args.sample_delay,
+                clear_thresh=args.clear_thresh,
+                red_margin=args.red_margin,
+                yellow_clear=args.yellow_clear,
+            )
+            return
+
         while True:
             pickup_angle = RIGHT_PICKUP if next_pickup_right else LEFT_PICKUP
             next_pickup_right = not next_pickup_right
 
+            if args.debug:
+                print(f"Pickup -> {pickup_angle}")
             move_servo(pca, SERVO_CHANNEL, pickup_angle, max_angle=MAX_ANGLE, offset=OFFSET)
-            time.sleep(PICKUP_SETTLE)
+            time.sleep(args.pickup_settle)
 
             if miss_count >= MISS_LIMIT:
                 agitate(pca, pickup_angle)
                 time.sleep(0.2)
 
+            if args.debug:
+                print(f"Detect -> {DETECT}")
             move_servo(pca, SERVO_CHANNEL, DETECT, max_angle=MAX_ANGLE, offset=OFFSET)
-            time.sleep(DETECT_SETTLE)
+            time.sleep(args.detect_settle)
 
-            color = classify_color(sensor)
+            color, sample = classify_color(
+                sensor,
+                args.clear_thresh,
+                args.red_margin,
+                args.yellow_clear,
+                sample_count=args.sample_count,
+                sample_delay=args.sample_delay,
+            )
+            if args.debug:
+                r, g, b, clear, red_delta = sample
+                print(
+                    f"Sample r={r:.1f} g={g:.1f} b={b:.1f} "
+                    f"clear={clear:.1f} red_delta={red_delta:.1f} -> {color}"
+                )
             if color == "red":
+                if args.debug:
+                    print(f"Drop -> robot ({ROBOT_DROP})")
                 move_servo(pca, SERVO_CHANNEL, ROBOT_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
-                time.sleep(DROP_SETTLE)
-                time.sleep(DROP_HOLD)
+                time.sleep(args.drop_settle)
+                time.sleep(args.drop_hold)
                 miss_count = 0
             elif color == "yellow":
+                if args.debug:
+                    print(f"Drop -> player ({PLAYER_DROP})")
                 move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
-                time.sleep(DROP_SETTLE)
-                time.sleep(DROP_HOLD)
+                time.sleep(args.drop_settle)
+                time.sleep(args.drop_hold)
                 miss_count = 0
             else:
+                if args.debug:
+                    print(f"Reset -> player ({PLAYER_DROP}) after {color}")
+                move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+                time.sleep(args.drop_settle)
                 miss_count += 1
 
     finally:

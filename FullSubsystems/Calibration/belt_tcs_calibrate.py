@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 import serial
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
+ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
@@ -11,8 +11,8 @@ from tcs_bus import open_tcs34725
 
 
 PORT = "/dev/serial0"
-DEFAULT_SPEED = 1000
-STEP_SIZE = 250
+DEFAULT_SPEED = 4000
+STEP_SIZE = 1500
 ACCEL = 400
 
 

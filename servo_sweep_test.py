@@ -3,7 +3,7 @@ import board
 import busio
 from adafruit_pca9685 import PCA9685
 
-OFFSETS = [4, 4, 4, 4, 4, 0, 0]
+OFFSETS = [4, 4, 4, 4, 4, 0, 1]
 
 
 def move_servo(pca, channel, angle, max_angle=180, offset=0):
@@ -23,16 +23,16 @@ def main():
     try:
         while True:
             for channel in range(7):
-                if channel == 6:
+                if channel == 3:
                     print("Servo 6 -> 270")
-                    move_servo(pca, channel, 90)
+                    move_servo(pca, channel, 270)
                     time.sleep(1)
                     print("Servo 6 -> 0")
-                    move_servo(pca, channel, 0)
+                    #move_servo(pca, channel, 0)
                     time.sleep(1)
                 else:
-                    print(f"Servo {channel} -> 90")
-                    move_servo(pca, channel, 90, offset=OFFSETS[channel])
+                    print(f"Servo {channel} -> 100")
+                    move_servo(pca, channel, 100, offset=OFFSETS[channel])
                     time.sleep(1)
                     print(f"Servo {channel} -> 0")
                     move_servo(pca, channel, 0, offset=OFFSETS[channel])

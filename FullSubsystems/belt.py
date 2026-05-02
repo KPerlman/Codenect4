@@ -1,3 +1,4 @@
+import argparse
 import time
 import sys
 from pathlib import Path
@@ -13,11 +14,13 @@ from tcs_bus import open_tcs34725
 
 PORT = "/dev/serial0"
 DEFAULT_SPEED = 1000
-BOOST_SPEED = 4000
-BOOST_STEPS = 250
-ACCEL = 400
-CLEAR_THRESH = 1733.7
+BOOST_SPEED = 5000
+BOOST_STEPS = 3000
+CALIBRATE_STEPS = 250
+ACCEL = 2000
+CLEAR_THRESH = 2051.0
 SAMPLE_DELAY = 0.05
+CONFIRM_READS = 3
 
 
 def wait_for(ser, targets, timeout_s=2.0):
@@ -39,6 +42,36 @@ def send_cmd(ser, cmd, expect=None):
     return None
 
 
+def read_clear(sensor, reads=CONFIRM_READS):
+    samples = []
+    for _ in range(reads):
+        _, _, _, clear = sensor.color_raw
+        samples.append(clear)
+        time.sleep(SAMPLE_DELAY)
+    return sum(samples) / len(samples)
+
+
+def summarize(samples):
+    if not samples:
+        return None
+    return {
+        "count": len(samples),
+        "min": min(samples),
+        "max": max(samples),
+        "avg": sum(samples) / len(samples),
+    }
+
+
+def update_threshold(piece_samples, empty_samples, current_thresh):
+    if piece_samples and empty_samples:
+        return (max(empty_samples) + min(piece_samples)) / 2.0
+    if piece_samples:
+        return min(piece_samples) - 1.0
+    if empty_samples:
+        return max(empty_samples) + 1.0
+    return current_thresh
+
+
 def boost(ser):
     send_cmd(ser, "STOP", {"OK"})
     send_cmd(ser, f"SPEED {BOOST_SPEED}", {"OK", "ERR"})
@@ -47,7 +80,78 @@ def boost(ser):
     send_cmd(ser, f"RUN {DEFAULT_SPEED}", {"OK", "ERR"})
 
 
+def sample_present(sensor, threshold):
+    clear = read_clear(sensor)
+    return clear >= threshold, clear
+
+
+def calibrate_mode(ser, sensor):
+    clear_thresh = CLEAR_THRESH
+    piece_samples = []
+    empty_samples = []
+
+    print("Belt calibration mode")
+    print("Moves 250 steps between entries. Labels: p=piece, e=empty, q=quit")
+
+    try:
+        while True:
+            send_cmd(ser, f"STEPS {CALIBRATE_STEPS}", {"DONE"})
+            clear = read_clear(sensor)
+            guess = "piece" if clear >= clear_thresh else "empty"
+            print(f"Clear={clear:.1f} guess={guess} threshold={clear_thresh:.1f}")
+
+            label = input("Label [p/e/q]: ").strip().lower()
+            if label == "q":
+                break
+            if label not in {"p", "e"}:
+                print("Use p, e, or q.")
+                continue
+
+            if label == "p":
+                piece_samples.append(clear)
+            else:
+                empty_samples.append(clear)
+
+            new_thresh = update_threshold(piece_samples, empty_samples, clear_thresh)
+            if new_thresh != clear_thresh:
+                clear_thresh = new_thresh
+                print(f"Updated clear threshold -> {clear_thresh:.1f}")
+
+    finally:
+        print("\n--- Calibration Summary ---")
+        piece_stats = summarize(piece_samples)
+        empty_stats = summarize(empty_samples)
+        if piece_stats:
+            print(
+                f"piece: count={piece_stats['count']} avg={piece_stats['avg']:.1f} "
+                f"range=({piece_stats['min']:.1f}-{piece_stats['max']:.1f})"
+            )
+        else:
+            print("piece: no samples")
+        if empty_stats:
+            print(
+                f"empty: count={empty_stats['count']} avg={empty_stats['avg']:.1f} "
+                f"range=({empty_stats['min']:.1f}-{empty_stats['max']:.1f})"
+            )
+        else:
+            print("empty: no samples")
+
+        if piece_samples and empty_samples:
+            final_thresh = update_threshold(piece_samples, empty_samples, clear_thresh)
+            print(f"Suggested clear threshold: {final_thresh:.1f}")
+        else:
+            print(f"Suggested clear threshold: {clear_thresh:.1f}")
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Belt control / calibration")
+    parser.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="Run calibration mode: move 250 steps between samples and print thresholds",
+    )
+    args = parser.parse_args()
+
     sensor = open_tcs34725(3, integration_time_ms=100, gain=4)
 
     ser = serial.Serial(PORT, 9600, timeout=1)
@@ -56,19 +160,46 @@ def main():
 
     send_cmd(ser, f"SPEED {DEFAULT_SPEED}", {"OK", "ERR"})
     send_cmd(ser, f"ACCEL {ACCEL}", {"OK", "ERR"})
+
+    if args.calibrate:
+        calibrate_mode(ser, sensor)
+        send_cmd(ser, "STOP", {"OK"})
+        ser.close()
+        return
+
     send_cmd(ser, f"RUN {DEFAULT_SPEED}", {"OK", "ERR"})
 
+    clear_thresh = CLEAR_THRESH
+    piece_samples = []
+    empty_samples = []
     last_present = False
 
     print("Belt loop running. Ctrl+C to stop.")
     try:
         while True:
-            _, _, _, clear = sensor.color_raw
-            present = clear >= CLEAR_THRESH
+            present, clear = sample_present(sensor, clear_thresh)
 
             if present and not last_present:
-                print("Piece detected -> boost")
-                boost(ser)
+                print(f"Piece detected (clear={clear:.1f}). Pausing belt for confirmation.")
+                send_cmd(ser, "STOP", {"OK"})
+                confirmation = input("Launch piece? [y/n]: ").strip().lower()
+                if confirmation in {"y", "yes"}:
+                    print("Launching piece.")
+                    piece_samples.append(clear)
+                    new_thresh = update_threshold(piece_samples, empty_samples, clear_thresh)
+                    if new_thresh != clear_thresh:
+                        clear_thresh = new_thresh
+                        print(f"Updated clear threshold -> {clear_thresh:.1f}")
+                    boost(ser)
+                else:
+                    empty_samples.append(clear)
+                    new_thresh = update_threshold(piece_samples, empty_samples, clear_thresh)
+                    if new_thresh != clear_thresh:
+                        clear_thresh = new_thresh
+                        print(f"Updated clear threshold -> {clear_thresh:.1f}")
+                    print(f"Resuming belt at {DEFAULT_SPEED} steps/sec.")
+                    send_cmd(ser, f"SPEED {DEFAULT_SPEED}", {"OK", "ERR"})
+                    send_cmd(ser, f"RUN {DEFAULT_SPEED}", {"OK", "ERR"})
                 last_present = False
             else:
                 last_present = present
@@ -77,6 +208,30 @@ def main():
     except KeyboardInterrupt:
         send_cmd(ser, "STOP", {"OK"})
     finally:
+        if piece_samples or empty_samples:
+            print("\n--- Calibration Summary ---")
+            piece_stats = summarize(piece_samples)
+            empty_stats = summarize(empty_samples)
+            if piece_stats:
+                print(
+                    f"piece: count={piece_stats['count']} avg={piece_stats['avg']:.1f} "
+                    f"range=({piece_stats['min']:.1f}-{piece_stats['max']:.1f})"
+                )
+            else:
+                print("piece: no samples")
+            if empty_stats:
+                print(
+                    f"empty: count={empty_stats['count']} avg={empty_stats['avg']:.1f} "
+                    f"range=({empty_stats['min']:.1f}-{empty_stats['max']:.1f})"
+                )
+            else:
+                print("empty: no samples")
+
+            if piece_samples and empty_samples:
+                final_thresh = update_threshold(piece_samples, empty_samples, clear_thresh)
+                print(f"Suggested clear threshold: {final_thresh:.1f}")
+            else:
+                print(f"Suggested clear threshold: {clear_thresh:.1f}")
         ser.close()
 
 
