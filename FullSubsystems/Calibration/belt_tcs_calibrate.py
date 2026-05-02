@@ -20,6 +20,7 @@ PORT = "/dev/serial0"
 DEFAULT_SPEED = 4000
 STEP_SIZE = 1500
 ACCEL = 400
+R_THRESH = 2051.0
 
 
 def open_belt_tcs34725(integration_time_ms=100, gain=4):
@@ -89,8 +90,7 @@ def sync_controller(ser, attempts=6, timeout_s=1.5):
 def read_sample(sensor, count=5, delay_s=0.05):
     r_total = g_total = b_total = c_total = 0
     for _ in range(count):
-        r, g, b = sensor.color_rgb_bytes
-        _, _, _, clear = sensor.color_raw
+        r, g, b, clear = sensor.color_raw
         r_total += r
         g_total += g
         b_total += b
@@ -107,13 +107,18 @@ def read_sample(sensor, count=5, delay_s=0.05):
 def summarize(samples):
     if not samples:
         return None
-    cs = [s[3] for s in samples]
+    rs = [s[0] for s in samples]
     return {
         "count": len(samples),
-        "c_avg": sum(cs) / len(cs),
-        "c_min": min(cs),
-        "c_max": max(cs),
+        "r_avg": sum(rs) / len(rs),
+        "r_min": min(rs),
+        "r_max": max(rs),
     }
+
+
+def print_run_command(r_thresh):
+    print("\nRun with:")
+    print(f"python3 FullSubsystems/belt.py --r-thresh {r_thresh:.1f}")
 
 
 def main():
@@ -162,8 +167,8 @@ def main():
     if piece_stats:
         print(
             f"piece: count={piece_stats['count']} "
-            f"clear_avg={piece_stats['c_avg']:.1f} "
-            f"clear_range=({piece_stats['c_min']:.1f}-{piece_stats['c_max']:.1f})"
+            f"red_avg={piece_stats['r_avg']:.1f} "
+            f"red_range=({piece_stats['r_min']:.1f}-{piece_stats['r_max']:.1f})"
         )
     else:
         print("piece: no samples")
@@ -171,15 +176,19 @@ def main():
     if empty_stats:
         print(
             f"empty: count={empty_stats['count']} "
-            f"clear_avg={empty_stats['c_avg']:.1f} "
-            f"clear_range=({empty_stats['c_min']:.1f}-{empty_stats['c_max']:.1f})"
+            f"red_avg={empty_stats['r_avg']:.1f} "
+            f"red_range=({empty_stats['r_min']:.1f}-{empty_stats['r_max']:.1f})"
         )
     else:
         print("empty: no samples")
 
     if piece_stats and empty_stats:
-        clear_thresh = (piece_stats["c_min"] + empty_stats["c_max"]) / 2.0
-        print(f"Suggested clear threshold: {clear_thresh:.1f}")
+        r_thresh = (piece_stats["r_min"] + empty_stats["r_max"]) / 2.0
+        print(f"Suggested red threshold: {r_thresh:.1f}")
+        print_run_command(r_thresh)
+    else:
+        print(f"Suggested red threshold: {R_THRESH:.1f}")
+        print_run_command(R_THRESH)
 
 
 if __name__ == "__main__":
