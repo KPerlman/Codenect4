@@ -42,19 +42,48 @@ def wait_for(ser, targets, timeout_s=2.0):
     deadline = time.time() + timeout_s
     while True:
         if time.time() > deadline:
-            return None
+            raise TimeoutError(f"Timeout waiting for {targets}")
         line = ser.readline().decode(errors="ignore").strip()
+        line = "".join(ch for ch in line if ch.isprintable())
         if line:
             print("<", line)
         if line in targets:
             return line
 
 
-def send_cmd(ser, cmd, expect=None):
-    ser.write(f"{cmd}\n".encode())
-    if expect:
-        return wait_for(ser, expect)
-    return None
+def send_cmd(ser, cmd, expect=None, timeout_s=2.0, attempts=3, pre_delay_s=0.1):
+    if expect is None:
+        ser.write(f"{cmd}\n".encode())
+        return None
+
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        time.sleep(pre_delay_s)
+        ser.write(f"{cmd}\n".encode())
+        try:
+            return wait_for(ser, expect, timeout_s=timeout_s)
+        except TimeoutError as exc:
+            last_error = exc
+            if attempt < attempts:
+                print(f"No response to {cmd!r}, retrying ({attempt}/{attempts})...")
+                ser.reset_input_buffer()
+                time.sleep(0.2)
+    raise last_error
+
+
+def sync_controller(ser, attempts=6, timeout_s=1.5):
+    for attempt in range(1, attempts + 1):
+        print(f"Pinging controller ({attempt}/{attempts})")
+        ser.write(b"PING\n")
+        try:
+            wait_for(ser, {"PONG"}, timeout_s=timeout_s)
+            time.sleep(0.3)
+            ser.reset_input_buffer()
+            return
+        except TimeoutError:
+            ser.reset_input_buffer()
+            time.sleep(0.3)
+    raise TimeoutError("Controller did not respond to PING")
 
 
 def read_sample(sensor, count=5, delay_s=0.05):
@@ -91,19 +120,20 @@ def main():
     sensor = open_belt_tcs34725(integration_time_ms=100, gain=4)
 
     ser = serial.Serial(PORT, 9600, timeout=1)
-    time.sleep(2)
-    ser.reset_input_buffer()
-
-    send_cmd(ser, f"SPEED {DEFAULT_SPEED}", {"OK", "ERR"})
-    send_cmd(ser, f"ACCEL {ACCEL}", {"OK", "ERR"})
-
-    piece_samples = []
-    empty_samples = []
-
     print("Belt TCS calibration")
     print("Labels: p=piece, e=empty, q=quit")
-
     try:
+        time.sleep(2)
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        sync_controller(ser)
+
+        send_cmd(ser, f"SPEED {DEFAULT_SPEED}", {"OK", "ERR"})
+        send_cmd(ser, f"ACCEL {ACCEL}", {"OK", "ERR"})
+
+        piece_samples = []
+        empty_samples = []
+
         while True:
             label = input("Label [p/e/q]: ").strip().lower()
             if label == "q":
@@ -120,7 +150,7 @@ def main():
             else:
                 empty_samples.append((r, g, b, clear))
 
-            send_cmd(ser, f"STEPS {STEP_SIZE}", {"DONE"})
+            send_cmd(ser, f"STEPS {STEP_SIZE}", {"DONE"}, timeout_s=10.0)
             time.sleep(0.2)
     finally:
         ser.close()

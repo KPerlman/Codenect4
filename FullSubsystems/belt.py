@@ -47,19 +47,48 @@ def wait_for(ser, targets, timeout_s=2.0):
     deadline = time.time() + timeout_s
     while True:
         if time.time() > deadline:
-            return None
+            raise TimeoutError(f"Timeout waiting for {targets}")
         line = ser.readline().decode(errors="ignore").strip()
+        line = "".join(ch for ch in line if ch.isprintable())
         if line:
             print("<", line)
         if line in targets:
             return line
 
 
-def send_cmd(ser, cmd, expect=None):
-    ser.write(f"{cmd}\n".encode())
-    if expect:
-        return wait_for(ser, expect)
-    return None
+def send_cmd(ser, cmd, expect=None, timeout_s=2.0, attempts=3, pre_delay_s=0.1):
+    if expect is None:
+        ser.write(f"{cmd}\n".encode())
+        return None
+
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        time.sleep(pre_delay_s)
+        ser.write(f"{cmd}\n".encode())
+        try:
+            return wait_for(ser, expect, timeout_s=timeout_s)
+        except TimeoutError as exc:
+            last_error = exc
+            if attempt < attempts:
+                print(f"No response to {cmd!r}, retrying ({attempt}/{attempts})...")
+                ser.reset_input_buffer()
+                time.sleep(0.2)
+    raise last_error
+
+
+def sync_controller(ser, attempts=6, timeout_s=1.5):
+    for attempt in range(1, attempts + 1):
+        print(f"Pinging controller ({attempt}/{attempts})")
+        ser.write(b"PING\n")
+        try:
+            wait_for(ser, {"PONG"}, timeout_s=timeout_s)
+            time.sleep(0.3)
+            ser.reset_input_buffer()
+            return
+        except TimeoutError:
+            ser.reset_input_buffer()
+            time.sleep(0.3)
+    raise TimeoutError("Controller did not respond to PING")
 
 
 def read_clear(sensor, reads=CONFIRM_READS):
@@ -103,7 +132,7 @@ def print_run_command(clear_thresh):
 def boost(ser):
     send_cmd(ser, "STOP", {"OK"})
     send_cmd(ser, f"SPEED {BOOST_SPEED}", {"OK", "ERR"})
-    send_cmd(ser, f"STEPS {BOOST_STEPS}", {"DONE"})
+    send_cmd(ser, f"STEPS {BOOST_STEPS}", {"DONE"}, timeout_s=10.0)
     send_cmd(ser, f"SPEED {DEFAULT_SPEED}", {"OK", "ERR"})
     send_cmd(ser, f"RUN {DEFAULT_SPEED}", {"OK", "ERR"})
 
@@ -123,7 +152,7 @@ def calibrate_mode(ser, sensor, initial_clear_thresh):
 
     try:
         while True:
-            send_cmd(ser, f"STEPS {CALIBRATE_STEPS}", {"DONE"})
+            send_cmd(ser, f"STEPS {CALIBRATE_STEPS}", {"DONE"}, timeout_s=10.0)
             clear = read_clear(sensor)
             guess = "piece" if clear >= clear_thresh else "empty"
             print(f"Clear={clear:.1f} guess={guess} threshold={clear_thresh:.1f}")
@@ -191,27 +220,28 @@ def main():
     sensor = open_belt_tcs34725(integration_time_ms=100, gain=4)
 
     ser = serial.Serial(PORT, 9600, timeout=1)
-    time.sleep(2)
-    ser.reset_input_buffer()
-
-    send_cmd(ser, f"SPEED {DEFAULT_SPEED}", {"OK", "ERR"})
-    send_cmd(ser, f"ACCEL {ACCEL}", {"OK", "ERR"})
-
-    if args.calibrate:
-        calibrate_mode(ser, sensor, args.clear_thresh)
-        send_cmd(ser, "STOP", {"OK"})
-        ser.close()
-        return
-
-    send_cmd(ser, f"RUN {DEFAULT_SPEED}", {"OK", "ERR"})
-
-    clear_thresh = args.clear_thresh
-    piece_samples = []
-    empty_samples = []
-    last_present = False
-
-    print("Belt loop running. Ctrl+C to stop.")
     try:
+        time.sleep(2)
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        sync_controller(ser)
+
+        send_cmd(ser, f"SPEED {DEFAULT_SPEED}", {"OK", "ERR"})
+        send_cmd(ser, f"ACCEL {ACCEL}", {"OK", "ERR"})
+
+        if args.calibrate:
+            calibrate_mode(ser, sensor, args.clear_thresh)
+            send_cmd(ser, "STOP", {"OK"})
+            return
+
+        send_cmd(ser, f"RUN {DEFAULT_SPEED}", {"OK", "ERR"})
+
+        clear_thresh = args.clear_thresh
+        piece_samples = []
+        empty_samples = []
+        last_present = False
+
+        print("Belt loop running. Ctrl+C to stop.")
         while True:
             present, clear = sample_present(sensor, clear_thresh)
 
@@ -242,9 +272,12 @@ def main():
 
             time.sleep(SAMPLE_DELAY)
     except KeyboardInterrupt:
-        send_cmd(ser, "STOP", {"OK"})
+        try:
+            send_cmd(ser, "STOP", {"OK"})
+        except TimeoutError:
+            print("STOP sent but no OK received before timeout.")
     finally:
-        if piece_samples or empty_samples:
+        if 'piece_samples' in locals() and (piece_samples or empty_samples):
             print("\n--- Calibration Summary ---")
             piece_stats = summarize(piece_samples)
             empty_stats = summarize(empty_samples)
