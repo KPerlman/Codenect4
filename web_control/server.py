@@ -623,7 +623,7 @@ PAGE_HTML = """
             </div>
             <div class="field">
               <label for="beltSteps">Steps</label>
-              <input id="beltSteps" type="number" inputmode="numeric" placeholder="empty = continuous">
+              <input id="beltSteps" type="number" inputmode="numeric">
             </div>
           </div>
           <div class="confirm-copy" id="beltStatusText">Belt idle.</div>

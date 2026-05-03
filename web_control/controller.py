@@ -983,6 +983,7 @@ class BeltWorker:
 
     def run(self):
         arduino = None
+        belt_stopped_cleanly = False
         try:
             import serial
 
@@ -1018,12 +1019,23 @@ class BeltWorker:
                 while not self.stop_event.is_set():
                     time.sleep(0.1)
                 self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0)
+                belt_stopped_cleanly = True
                 self.controller._update_state(
                     belt_running=False,
                     belt_status="stopped",
+                    belt_error=None,
                     message="Belt stopped",
                 )
         except Exception as exc:
+            if str(exc) == "Belt stop requested":
+                belt_stopped_cleanly = True
+                self.controller._update_state(
+                    belt_running=False,
+                    belt_status="stopped",
+                    belt_error=None,
+                    message="Belt stopped",
+                )
+                return
             self.controller._update_state(
                 belt_running=False,
                 belt_status="error",
@@ -1035,6 +1047,8 @@ class BeltWorker:
             with self.controller._lock:
                 if self.controller._belt_thread is threading.current_thread():
                     self.controller._belt_thread = None
+                if belt_stopped_cleanly:
+                    self.controller._belt_stop_event = None
             if arduino is not None:
                 try:
                     arduino.close()
