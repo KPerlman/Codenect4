@@ -508,20 +508,6 @@ PAGE_HTML = """
           </div>
         </div>
 
-        <div id="sorterCalibrationCard" class="panel confirm-panel">
-          <div class="section-title">Sorter Calibration</div>
-          <div id="sorterCalibrationTitle" class="confirm-title">Calibration idle</div>
-          <div id="sorterCalibrationCopy" class="confirm-copy">Calibration will step the sorter to detect and wait for a label. Future sorting runs will use the saved values.</div>
-          <div id="sorterCalibrationSample" class="confirm-copy">No sample yet.</div>
-          <div id="sorterCalibrationCounts" class="confirm-copy">red 0 | yellow 0 | none 0</div>
-          <div class="controls">
-            <button id="sorterLabelRed" class="danger" onclick="labelSorterCalibration('r')">Red</button>
-            <button id="sorterLabelYellow" class="warning" onclick="labelSorterCalibration('y')">Yellow</button>
-            <button id="sorterLabelNone" class="secondary" onclick="labelSorterCalibration('n')">None</button>
-            <button id="sorterLabelQuit" class="ok" onclick="labelSorterCalibration('q')">Quit</button>
-          </div>
-        </div>
-
         <div id="yellowCard" class="panel confirm-panel hidden">
           <div class="section-title">Yellow Confirmation</div>
           <div class="confirm-title">Validate player move</div>
@@ -552,6 +538,20 @@ PAGE_HTML = """
             <button class="ok" onclick="enableSorting()">Enable Sorting</button>
             <button class="secondary" onclick="disableSorting()">Disable Sorting</button>
             <button onclick="startSorterCalibration()">Start Sorter Calibration</button>
+          </div>
+        </div>
+
+        <div id="sorterCalibrationCard" class="panel confirm-panel hidden">
+          <div class="section-title">Sorter Calibration</div>
+          <div id="sorterCalibrationTitle" class="confirm-title">Calibration active</div>
+          <div id="sorterCalibrationCopy" class="confirm-copy">Calibration will step the sorter to detect and wait for a label. Future sorting runs will use the saved values.</div>
+          <div id="sorterCalibrationSample" class="confirm-copy">No sample yet.</div>
+          <div id="sorterCalibrationCounts" class="confirm-copy">red 0 | yellow 0 | none 0</div>
+          <div class="controls">
+            <button id="sorterLabelRed" class="danger" onclick="labelSorterCalibration('r')">Red</button>
+            <button id="sorterLabelYellow" class="warning" onclick="labelSorterCalibration('y')">Yellow</button>
+            <button id="sorterLabelNone" class="secondary" onclick="labelSorterCalibration('n')">None</button>
+            <button id="sorterLabelQuit" class="ok" onclick="labelSorterCalibration('q')">Quit</button>
           </div>
         </div>
 
@@ -822,6 +822,7 @@ PAGE_HTML = """
     }
 
     function renderSorterCalibration(state) {
+      const card = document.getElementById("sorterCalibrationCard");
       const title = document.getElementById("sorterCalibrationTitle");
       const copy = document.getElementById("sorterCalibrationCopy");
       const sample = document.getElementById("sorterCalibrationSample");
@@ -833,15 +834,10 @@ PAGE_HTML = """
       const calibrationCounts = state.sorter_calibration_counts || { red: 0, yellow: 0, none: 0 };
       const active = !!state.sorter_calibration_running;
 
-      if (active) {
-        title.textContent = "Calibration active";
-      } else if (state.sorter_calibration_prompt) {
-        title.textContent = "Calibration update";
-      } else {
-        title.textContent = "Calibration idle";
-      }
+      card.classList.toggle("hidden", !active);
+      title.textContent = "Calibration active";
 
-      copy.textContent = state.sorter_calibration_prompt || "Press Start Sorter Calibration to begin labeling pieces.";
+      copy.textContent = state.sorter_calibration_prompt || "Label the current sorter sample.";
 
       if (state.sorter_calibration_sample) {
         const s = state.sorter_calibration_sample;
