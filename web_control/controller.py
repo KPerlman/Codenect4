@@ -28,12 +28,33 @@ from connect4_vision import Connect4Tracker
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+DROP_SERVO_ANGLE = 100
+
+
 def move_servo_zero_position(pca, channel, angle, max_angle=180, offset=0):
     pulse_min = 450
     pulse_max = 2550
     corrected_angle = max(0, min(max_angle, angle + offset))
     pulse = pulse_min + (corrected_angle / float(max_angle)) * (pulse_max - pulse_min)
     pca.channels[channel].duty_cycle = int(pulse / 20000 * 65535)
+
+
+def move_game_servo(pca, channel, angle):
+    move_servo_zero_position(
+        pca,
+        channel,
+        angle,
+        max_angle=SERVO_MAX_ANGLES[channel],
+        offset=SERVO_OFFSETS[channel],
+    )
+
+
+def drop_servo_channel_for_visible_column(visible_column):
+    if visible_column is None or visible_column <= 0:
+        return None
+    if visible_column > 6:
+        return None
+    return 6 - visible_column
 
 
 def board_to_lists(board_state):
@@ -402,6 +423,27 @@ class GameLoopWorker:
         self.depth = depth
         self.state_streak = state_streak
 
+    def _set_drop_servo(self, servo_pca, current_channel, visible_column):
+        if servo_pca is None:
+            return current_channel
+
+        next_channel = drop_servo_channel_for_visible_column(visible_column)
+        if current_channel is not None and current_channel != next_channel:
+            move_game_servo(servo_pca, current_channel, 0)
+
+        if next_channel is not None and next_channel != current_channel:
+            move_game_servo(servo_pca, next_channel, DROP_SERVO_ANGLE)
+        elif next_channel is None and current_channel is not None:
+            move_game_servo(servo_pca, current_channel, 0)
+
+        return next_channel
+
+    def _reset_drop_servo(self, servo_pca, current_channel):
+        if servo_pca is None or current_channel is None:
+            return None
+        move_game_servo(servo_pca, current_channel, 0)
+        return None
+
     def _sync_tracker_board(self, tracker, board_state):
         tracker.board_state = np.copy(board_state)
         board_list = board_to_lists(board_state)
@@ -492,17 +534,36 @@ class GameLoopWorker:
 
     def run(self):
         cap = None
+        servo_pca = None
         tracker = Connect4Tracker()
         remaining_candidates = []
         camera_source = None
         failed_reads = 0
         recovery_cycles = 0
+        active_drop_servo_channel = None
         confirmed_board = None
         last_seen_board = None
         stable_streak = 0
         stable_board = None
 
         try:
+            try:
+                import board
+                import busio
+                from adafruit_pca9685 import PCA9685
+
+                i2c_pca = busio.I2C(board.SCL, board.SDA)
+                servo_pca = PCA9685(i2c_pca)
+                servo_pca.frequency = 50
+                for channel in range(6):
+                    move_game_servo(servo_pca, channel, 0)
+            except Exception as exc:
+                servo_pca = None
+                self.controller._update_state(
+                    message=f"Game loop started without drop-servo control: {exc}",
+                    error=None,
+                )
+
             candidates = choose_camera(
                 preferred_index=self.camera,
                 preferred_device=self.device,
@@ -704,7 +765,16 @@ class GameLoopWorker:
                     suggested_red_column=visible_red_col,
                     message=f"Computer chose RED column {visible_red_col} (score={score})",
                 )
+                active_drop_servo_channel = self._set_drop_servo(
+                    servo_pca,
+                    active_drop_servo_channel,
+                    visible_red_col,
+                )
                 maybe_red_board = self._await_red_confirmation(ai_expected_board, visible_red_col)
+                active_drop_servo_channel = self._reset_drop_servo(
+                    servo_pca,
+                    active_drop_servo_channel,
+                )
                 if maybe_red_board is None:
                     break
                 confirmed_board = np.copy(maybe_red_board)
@@ -752,8 +822,14 @@ class GameLoopWorker:
         except Exception as exc:
             self.controller._finalize_game_stop("Game loop failed", error=str(exc))
         finally:
+            active_drop_servo_channel = self._reset_drop_servo(
+                servo_pca,
+                active_drop_servo_channel,
+            )
             if cap is not None:
                 cap.release()
+            if servo_pca is not None:
+                servo_pca.deinit()
 
 
 class SorterCalibrationWorker:
