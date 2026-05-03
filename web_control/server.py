@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03d"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03e"
 
 
 class StartGameRequest(BaseModel):
@@ -276,29 +276,29 @@ PAGE_HTML = """
       width: 100%;
       margin: 0 auto;
       border-radius: 10px;
-      background:
-        radial-gradient(circle at top, rgba(255,255,255,0.12) 0%, transparent 28%),
-        linear-gradient(180deg, var(--board-top) 0%, var(--board-bottom) 100%);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 10px 18px rgba(15, 23, 42, 0.12);
+      background: #2156c7;
+      box-shadow: 0 10px 18px rgba(15, 23, 42, 0.12);
     }
     .slot {
       aspect-ratio: 1;
       border-radius: 999px;
-      background:
-        radial-gradient(circle at 35% 30%, #ffffff 0%, #f2f6ff 24%, var(--slot-empty) 60%, #c9d7f4 100%);
-      border: 2px solid rgba(255,255,255,0.14);
-      box-shadow: inset 0 6px 12px rgba(0,0,0,0.18);
+      background: #d7e1f5;
+      border: 2px solid rgba(255,255,255,0.10);
+      box-shadow: inset 0 2px 6px rgba(10,20,40,0.16);
     }
     .slot.red {
-      background: radial-gradient(circle at 35% 30%, #ff9c91 0%, #f65f4d 28%, var(--red) 68%, #9d1f18 100%);
+      background: #bf3f35;
     }
     .slot.yellow {
-      background: radial-gradient(circle at 35% 30%, #fff4ab 0%, #f8df7c 34%, var(--yellow) 72%, #c89617 100%);
+      background: #d7a51d;
     }
     .slot.pending-yellow {
-      background: radial-gradient(circle at 35% 30%, #fff8ca 0%, #ffef9f 36%, #f7da71 70%, #d9ab2c 100%);
+      background: #f1d770;
       opacity: 0.84;
       box-shadow: inset 0 4px 10px rgba(120,90,0,0.12), 0 0 0 3px rgba(255,209,90,0.28);
+    }
+    .slot.manual-yellow {
+      box-shadow: inset 0 2px 6px rgba(10,20,40,0.16), 0 0 0 3px rgba(55,104,215,0.18);
     }
     .slot.clickable {
       cursor: pointer;
@@ -423,6 +423,30 @@ PAGE_HTML = """
       line-height: 1.45;
       font-size: 0.92rem;
     }
+    .thinking-line {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      white-space: nowrap;
+    }
+    .loading-dots {
+      display: inline-flex;
+      gap: 5px;
+      transform: translateY(2px);
+    }
+    .loading-dots span {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(17, 24, 39, 0.48);
+      animation: pulseDot 1s infinite ease-in-out;
+    }
+    .loading-dots span:nth-child(2) { animation-delay: 0.16s; }
+    .loading-dots span:nth-child(3) { animation-delay: 0.32s; }
+    @keyframes pulseDot {
+      0%, 80%, 100% { opacity: 0.28; transform: scale(0.8); }
+      40% { opacity: 1; transform: scale(1); }
+    }
     .footer-note {
       margin-top: 14px;
       text-align: center;
@@ -463,20 +487,6 @@ PAGE_HTML = """
             <button onclick="startGame()">Start Game</button>
             <button class="warning" onclick="resetGame()">Reset Game</button>
             <button class="danger" onclick="stopGame()">Stop Game</button>
-          </div>
-        </div>
-
-        <div class="panel section">
-          <div class="section-title">Manual Yellow Entry</div>
-          <div class="confirm-copy">Register a yellow move directly if the camera has not picked it up yet.</div>
-          <div class="controls">
-            <button class="secondary" onclick="manualYellowMove(6)">6</button>
-            <button class="secondary" onclick="manualYellowMove(5)">5</button>
-            <button class="secondary" onclick="manualYellowMove(4)">4</button>
-            <button class="secondary" onclick="manualYellowMove(3)">3</button>
-            <button class="secondary" onclick="manualYellowMove(2)">2</button>
-            <button class="secondary" onclick="manualYellowMove(1)">1</button>
-            <button class="secondary" onclick="manualYellowMove(0)">0</button>
           </div>
         </div>
       </div>
@@ -666,6 +676,13 @@ PAGE_HTML = """
 
     async function handleBoardClick(visibleColumn, isPendingCell) {
       if (!latestState) return;
+      if (
+        latestState.game_status === "waiting_human_move" ||
+        latestState.turn_state === "human_turn"
+      ) {
+        await manualYellowMove(visibleColumn);
+        return;
+      }
       if (latestState.awaiting_confirmation === "yellow") {
         if (isPendingCell) {
           await confirmYellow(true);
@@ -706,7 +723,15 @@ PAGE_HTML = """
             slot.classList.remove("yellow");
             slot.classList.add("pending-yellow");
           }
-          if (latestState && latestState.awaiting_confirmation === "yellow") {
+          if (
+            latestState &&
+            (latestState.game_status === "waiting_human_move" ||
+              latestState.turn_state === "human_turn")
+          ) {
+            slot.classList.add("clickable", "manual-yellow");
+            slot.title = `Register yellow in column ${originalCol}`;
+            slot.addEventListener("click", () => handleBoardClick(originalCol, false));
+          } else if (latestState && latestState.awaiting_confirmation === "yellow") {
             slot.classList.add("clickable");
             slot.title = isPending
               ? `Confirm detected yellow in column ${originalCol}`
@@ -808,7 +833,11 @@ PAGE_HTML = """
       const title = document.getElementById("bannerTitle");
       const text = document.getElementById("bannerText");
       banner.className = config.className;
-      title.textContent = config.title;
+      if (state.game_status === "thinking") {
+        title.innerHTML = `<span class="thinking-line">Computer is thinking<span class="loading-dots"><span></span><span></span><span></span></span></span>`;
+      } else {
+        title.textContent = config.title;
+      }
       text.textContent = config.text;
     }
 
