@@ -425,6 +425,7 @@ class GameLoopWorker:
         remaining_candidates = []
         camera_source = None
         failed_reads = 0
+        recovery_cycles = 0
         confirmed_board = None
         last_seen_board = None
         stable_streak = 0
@@ -465,6 +466,13 @@ class GameLoopWorker:
                         time.sleep(0.1)
                         continue
 
+                    recovery_cycles += 1
+                    if recovery_cycles > 3:
+                        raise RuntimeError(
+                            f"Camera repeatedly failed to recover on {camera_source}. "
+                            "Check the USB camera connection and restart the game loop."
+                        )
+
                     self.controller._update_state(message=f"Camera read failed; reopening {camera_source}")
                     cap.release()
                     reopened = reopen_camera(camera_source, self.width, self.height, attempts=12, delay_s=0.5)
@@ -490,6 +498,7 @@ class GameLoopWorker:
                     raise RuntimeError("Camera frame read failed and no camera recovered.")
 
                 failed_reads = 0
+                recovery_cycles = 0
                 _, _, _ = tracker.process_frame(frame)
                 board_copy = np.copy(tracker.board_state)
 

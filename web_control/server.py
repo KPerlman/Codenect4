@@ -458,6 +458,15 @@ PAGE_HTML = """
             </div>
           </div>
         </div>
+
+        <div class="panel section">
+          <div class="section-title">Game Controls</div>
+          <div class="controls">
+            <button onclick="startGame()">Start Game</button>
+            <button class="warning" onclick="resetGame()">Reset Game</button>
+            <button class="danger" onclick="stopGame()">Stop Game</button>
+          </div>
+        </div>
       </div>
 
       <div class="stack">
@@ -520,15 +529,6 @@ PAGE_HTML = """
           <div id="redCopy" class="confirm-copy">The computer has chosen a red column. Place the piece, then confirm it here.</div>
           <div class="controls">
             <button class="warning" onclick="confirmRed()">Red Piece Placed</button>
-          </div>
-        </div>
-
-        <div class="panel section">
-          <div class="section-title">Game Controls</div>
-          <div class="controls">
-            <button onclick="startGame()">Start Game</button>
-            <button class="warning" onclick="resetGame()">Reset Game</button>
-            <button class="danger" onclick="stopGame()">Stop Game</button>
           </div>
         </div>
 
