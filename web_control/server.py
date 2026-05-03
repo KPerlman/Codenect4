@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03c"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03d"
 
 
 class StartGameRequest(BaseModel):
@@ -26,6 +26,10 @@ class ConfirmYellowRequest(BaseModel):
 
 class SorterCalibrationLabelRequest(BaseModel):
     label: str
+
+
+class ManualHumanMoveRequest(BaseModel):
+    column: int
 
 
 @app.get("/api/state")
@@ -79,6 +83,11 @@ def api_confirm_yellow(request: ConfirmYellowRequest):
 @app.post("/api/game/red-confirm")
 def api_confirm_red():
     return controller.confirm_red()
+
+
+@app.post("/api/game/manual-human-move")
+def api_manual_human_move(request: ManualHumanMoveRequest):
+    return controller.manual_human_move(request.column)
 
 
 @app.post("/api/sorting/enable")
@@ -221,7 +230,7 @@ PAGE_HTML = """
       max-width: 50rem;
     }
     .banner.thinking {
-      background: linear-gradient(180deg, var(--accent-soft) 0%, rgba(77,163,255,0.02) 100%);
+      background: #eef4ff;
     }
     .banner.waiting {
       background: linear-gradient(180deg, var(--warn-soft) 0%, rgba(255,191,71,0.02) 100%);
@@ -261,16 +270,16 @@ PAGE_HTML = """
     .board {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
-      gap: 9px;
-      padding: 16px;
-      max-width: 520px;
+      gap: 8px;
+      padding: 14px;
+      max-width: 460px;
       width: 100%;
       margin: 0 auto;
       border-radius: 10px;
       background:
         radial-gradient(circle at top, rgba(255,255,255,0.12) 0%, transparent 28%),
         linear-gradient(180deg, var(--board-top) 0%, var(--board-bottom) 100%);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 14px 24px rgba(15, 23, 42, 0.14);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 10px 18px rgba(15, 23, 42, 0.12);
     }
     .slot {
       aspect-ratio: 1;
@@ -414,21 +423,6 @@ PAGE_HTML = """
       line-height: 1.45;
       font-size: 0.92rem;
     }
-    .thinking {
-      display: inline-block;
-      white-space: nowrap;
-    }
-    .thinking::after {
-      content: "";
-      animation: dots 1.2s steps(4, end) infinite;
-    }
-    @keyframes dots {
-      0% { content: ""; }
-      25% { content: "."; }
-      50% { content: ".."; }
-      75% { content: "..."; }
-      100% { content: ""; }
-    }
     .footer-note {
       margin-top: 14px;
       text-align: center;
@@ -469,6 +463,20 @@ PAGE_HTML = """
             <button onclick="startGame()">Start Game</button>
             <button class="warning" onclick="resetGame()">Reset Game</button>
             <button class="danger" onclick="stopGame()">Stop Game</button>
+          </div>
+        </div>
+
+        <div class="panel section">
+          <div class="section-title">Manual Yellow Entry</div>
+          <div class="confirm-copy">Register a yellow move directly if the camera has not picked it up yet.</div>
+          <div class="controls">
+            <button class="secondary" onclick="manualYellowMove(6)">6</button>
+            <button class="secondary" onclick="manualYellowMove(5)">5</button>
+            <button class="secondary" onclick="manualYellowMove(4)">4</button>
+            <button class="secondary" onclick="manualYellowMove(3)">3</button>
+            <button class="secondary" onclick="manualYellowMove(2)">2</button>
+            <button class="secondary" onclick="manualYellowMove(1)">1</button>
+            <button class="secondary" onclick="manualYellowMove(0)">0</button>
           </div>
         </div>
       </div>
@@ -636,6 +644,11 @@ PAGE_HTML = """
       await refresh();
     }
 
+    async function manualYellowMove(column) {
+      await api("/api/game/manual-human-move", "POST", { column });
+      await refresh();
+    }
+
     function getPendingYellowCells(state) {
       if (!state || state.awaiting_confirmation !== "yellow" || !state.current_board || !state.confirmed_board) {
         return [];
@@ -751,7 +764,7 @@ PAGE_HTML = """
         return {
           className: "banner thinking",
           title: "Computer is thinking",
-          text: state.message || "Choosing where red should go next.",
+          text: "Selecting a red move.",
         };
       }
       if (state.game_status === "waiting_human_move") {
@@ -795,11 +808,7 @@ PAGE_HTML = """
       const title = document.getElementById("bannerTitle");
       const text = document.getElementById("bannerText");
       banner.className = config.className;
-      if (state.game_status === "thinking") {
-        title.innerHTML = `<span class="thinking">${config.title}</span>`;
-      } else {
-        title.textContent = config.title;
-      }
+      title.textContent = config.title;
       text.textContent = config.text;
     }
 
