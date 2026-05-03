@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "web-ui-2026-05-03a"
+WEB_CONTROL_VERSION = "broadcast-desk-2026-05-03a"
 
 
 class StartGameRequest(BaseModel):
@@ -22,10 +22,6 @@ class StartGameRequest(BaseModel):
 class ConfirmYellowRequest(BaseModel):
     accept: bool = True
     column: int | None = None
-
-
-class ManualMoveRequest(BaseModel):
-    column: int
 
 
 @app.get("/api/state")
@@ -81,11 +77,6 @@ def api_confirm_red():
     return controller.confirm_red()
 
 
-@app.post("/api/game/manual-human")
-def api_manual_human(request: ManualMoveRequest):
-    return controller.manual_human_move(request.column)
-
-
 @app.post("/api/sorting/enable")
 def api_enable_sorting():
     return controller.enable_sorting()
@@ -116,314 +107,318 @@ PAGE_HTML = """
   <title>Codenect4 Control</title>
   <style>
     :root {
-      --bg: #f5f7fb;
-      --card: rgba(255, 255, 255, 0.94);
-      --card-strong: #ffffff;
-      --ink: #101828;
-      --muted: #667085;
-      --accent: #2563eb;
-      --accent-deep: #173b87;
-      --warn: #b96a15;
-      --danger: #c53f35;
-      --ok: #147d6f;
-      --line: #e7eaf0;
-      --line-strong: #d0d5dd;
-      --red: #df473c;
-      --yellow: #f3c94f;
-      --board-blue-top: #2f63da;
-      --board-blue-bottom: #173a88;
-      --slot-empty: #eff3ff;
+      --bg: #09111f;
+      --bg-top: #10213d;
+      --card: rgba(14, 24, 43, 0.9);
+      --card-soft: rgba(16, 29, 52, 0.72);
+      --ink: #f4f7fb;
+      --muted: #9fb0cb;
+      --line: rgba(255,255,255,0.08);
+      --line-strong: rgba(255,255,255,0.18);
+      --accent: #2b7cff;
+      --accent-soft: rgba(43,124,255,0.18);
+      --yellow: #f4c542;
+      --yellow-soft: rgba(244,197,66,0.16);
+      --red: #ef4b3f;
+      --red-soft: rgba(239,75,63,0.16);
+      --ok: #16b69a;
+      --ok-soft: rgba(22,182,154,0.16);
+      --board-blue-top: #2358e4;
+      --board-blue-bottom: #102a75;
+      --slot-empty: #dce6ff;
     }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: Inter, "Avenir Next", "Segoe UI", sans-serif;
-      background:
-        radial-gradient(circle at top left, rgba(37,99,235,0.06) 0%, transparent 28%),
-        linear-gradient(180deg, #f8fbff 0%, var(--bg) 44%, #f6f8fc 100%);
       color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(43,124,255,0.18) 0%, transparent 30%),
+        radial-gradient(circle at top right, rgba(239,75,63,0.10) 0%, transparent 24%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg) 52%, #050b15 100%);
     }
     .wrap {
-      max-width: 960px;
+      max-width: 1220px;
       margin: 0 auto;
-      padding: 16px 16px 48px;
+      padding: 24px 20px 48px;
     }
-    .hero {
-      background: transparent;
-      border: 0;
-      border-radius: 0;
-      padding: 4px 0 8px;
-      backdrop-filter: none;
-      box-shadow: none;
+    .masthead {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .kicker {
+      color: #78a6ff;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-weight: 800;
+      font-size: 0.76rem;
     }
     h1 {
-      margin: 0 0 6px;
-      font-size: 1.95rem;
-      letter-spacing: 0.02em;
-      font-weight: 760;
+      margin: 0;
+      font-size: 2.8rem;
+      line-height: 0.96;
+      letter-spacing: -0.06em;
+      font-weight: 820;
     }
     .sub {
       margin: 0;
       color: var(--muted);
-      max-width: 36rem;
-      font-size: 0.98rem;
+      max-width: 42rem;
+      line-height: 1.5;
     }
-    .card {
+    .layout {
+      display: grid;
+      gap: 18px;
+      align-items: start;
+    }
+    @media (min-width: 980px) {
+      .layout {
+        grid-template-columns: minmax(0, 1.45fr) minmax(340px, 0.72fr);
+      }
+    }
+    .stack {
+      display: grid;
+      gap: 14px;
+    }
+    .panel {
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 12px;
       padding: 16px;
-      box-shadow: 0 6px 18px rgba(16, 24, 40, 0.04);
+      box-shadow: 0 18px 40px rgba(0,0,0,0.22);
+      backdrop-filter: blur(12px);
     }
-    .stack {
+    .hero-panel {
+      padding: 0;
+      overflow: hidden;
+    }
+    .broadcast-banner {
       display: grid;
+      gap: 0;
+    }
+    .banner-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       gap: 12px;
+      padding: 12px 16px;
+      background: rgba(255,255,255,0.05);
+      border-bottom: 1px solid var(--line);
     }
-    .hero-grid {
-      display: grid;
-      gap: 12px;
-      margin-top: 14px;
-    }
-    @media (min-width: 820px) {
-      .hero-grid {
-        grid-template-columns: minmax(0, 1.18fr) minmax(320px, 0.82fr);
-        align-items: start;
-      }
-      .hero-grid > .stack:first-child { order: 2; }
-      .hero-grid > .stack:last-child { order: 1; }
-    }
-    .controls {
-      display: grid;
-      gap: 8px;
-      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-    }
-    button {
-      border: 1px solid transparent;
-      border-radius: 10px;
-      padding: 11px 13px;
-      font: inherit;
-      font-weight: 650;
-      background: var(--accent);
-      color: white;
-      cursor: pointer;
-      box-shadow: none;
-      transition: background 120ms ease, transform 120ms ease, opacity 120ms ease, border-color 120ms ease;
-    }
-    button:hover {
-      opacity: 0.96;
-    }
-    button.secondary { background: #475467; }
-    button.warning { background: var(--warn); }
-    button.danger { background: var(--danger); }
-    button.ok { background: var(--ok); }
-    button.ghost {
-      background: #ffffff;
-      color: var(--ink);
-      border: 1px solid var(--line-strong);
-      box-shadow: none;
-    }
-    h2 {
-      margin: 0 0 12px;
-      font-size: 0.96rem;
-      letter-spacing: 0.06em;
+    .banner-label {
+      font-size: 0.78rem;
+      letter-spacing: 0.16em;
       text-transform: uppercase;
+      font-weight: 800;
+      color: #a7c5ff;
     }
-    .status-pill {
-      display: inline-block;
-      padding: 5px 9px;
+    .live-pill {
+      padding: 6px 10px;
       border-radius: 999px;
-      background: #f2f4f7;
-      color: #344054;
+      background: var(--red);
+      color: white;
       font-size: 0.75rem;
-      font-weight: 700;
-      margin-right: 6px;
-      margin-bottom: 6px;
-      border: 1px solid #eaecf0;
-    }
-    .banner {
-      border-radius: 12px;
-      padding: 16px;
-      border: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.94);
-    }
-    .banner.kicker {
-      display: inline-block;
-      font-size: 0.82rem;
+      font-weight: 800;
       letter-spacing: 0.08em;
       text-transform: uppercase;
-      color: var(--muted);
-      font-weight: 700;
-      margin-bottom: 8px;
     }
-    .banner h2 {
-      margin: 0;
-      font-size: 1.25rem;
-    }
-    .banner p {
-      margin: 8px 0 0;
-      color: var(--muted);
-    }
-    .banner.thinking {
-      background: #eef4ff;
-      border-color: #cadeff;
-    }
-    .banner.waiting {
-      background: #fff6e8;
-      border-color: #f2d39c;
-    }
-    .banner.ready {
-      background: #ebfaf7;
-      border-color: #b6e2d8;
-    }
-    .confirm-card {
-      border-radius: 12px;
-      padding: 16px;
-      border: 1px solid var(--line-strong);
-      background: #ffffff;
-    }
-    .confirm-card.hidden {
-      display: none;
-    }
-    .confirm-title {
-      margin: 0 0 8px;
-      font-size: 1.05rem;
-    }
-    .confirm-copy {
-      margin: 0 0 14px;
-      color: var(--muted);
-      line-height: 1.4;
-    }
-    .board {
+    .banner-main {
+      padding: 18px 18px 16px;
       display: grid;
-      grid-template-columns: repeat(7, 1fr);
-      gap: 10px;
-      margin-top: 14px;
-      background:
-        radial-gradient(circle at top, rgba(255,255,255,0.18) 0%, transparent 30%),
-        linear-gradient(180deg, var(--board-blue-top) 0%, var(--board-blue-bottom) 100%);
-      padding: 18px;
-      border-radius: 16px;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 12px 22px rgba(22,57,131,0.16);
+      gap: 8px;
     }
-    .slot {
-      aspect-ratio: 1;
+    .banner-title {
+      font-size: 2rem;
+      line-height: 0.96;
+      letter-spacing: -0.05em;
+      font-weight: 810;
+    }
+    .banner-copy {
+      color: var(--muted);
+      line-height: 1.5;
+      max-width: 48rem;
+    }
+    .banner-main.thinking {
+      background: linear-gradient(180deg, rgba(43,124,255,0.18) 0%, rgba(43,124,255,0.06) 100%);
+    }
+    .banner-main.waiting {
+      background: linear-gradient(180deg, rgba(244,197,66,0.18) 0%, rgba(244,197,66,0.06) 100%);
+    }
+    .banner-main.ready {
+      background: linear-gradient(180deg, rgba(22,182,154,0.16) 0%, rgba(22,182,154,0.05) 100%);
+    }
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .chip {
+      padding: 6px 10px;
       border-radius: 999px;
-      background:
-        radial-gradient(circle at 35% 30%, #ffffff 0%, #f2f6ff 25%, var(--slot-empty) 60%, #d9e2f5 100%);
-      border: 2px solid rgba(255,255,255,0.18);
-      box-shadow:
-        inset 0 6px 12px rgba(0,0,0,0.18),
-        0 2px 0 rgba(255,255,255,0.12);
+      border: 1px solid var(--line-strong);
+      background: rgba(255,255,255,0.05);
+      color: #d7e4ff;
+      font-size: 0.76rem;
+      font-weight: 700;
     }
-    .slot.red {
-      background: radial-gradient(circle at 35% 30%, #ff9486 0%, #f54f3d 28%, var(--red) 68%, #8f1911 100%);
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 0.82rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: #8fa7d4;
+      font-weight: 800;
     }
-    .slot.yellow {
-      background: radial-gradient(circle at 35% 30%, #fff4a8 0%, #fbe171 32%, var(--yellow) 70%, #c79212 100%);
-    }
-    .slot.pending-yellow {
-      background: radial-gradient(circle at 35% 30%, #fffad1 0%, #fff2a0 34%, #f7da6d 68%, #e0bf49 100%);
-      opacity: 0.78;
-      border-color: rgba(255,255,255,0.42);
-      box-shadow:
-        inset 0 4px 10px rgba(120,90,0,0.15),
-        0 0 0 3px rgba(243, 201, 79, 0.32);
-    }
-    .slot.clickable {
-      cursor: pointer;
-    }
-    .slot.clickable:hover {
-      transform: scale(1.03);
+    .board-card {
+      display: grid;
+      gap: 12px;
+      padding: 18px;
     }
     .cols {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
       gap: 8px;
-      margin-top: 6px;
       text-align: center;
-      font-weight: 700;
-      color: #35518a;
-      letter-spacing: 0.04em;
+      color: #8da5d9;
+      font-size: 0.74rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+    }
+    .board {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 12px;
+      padding: 22px;
+      background:
+        radial-gradient(circle at top, rgba(255,255,255,0.12) 0%, transparent 30%),
+        linear-gradient(180deg, var(--board-blue-top) 0%, var(--board-blue-bottom) 100%);
+      border-radius: 14px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 22px 34px rgba(0,0,0,0.28);
+    }
+    .slot {
+      aspect-ratio: 1;
+      border-radius: 999px;
+      background:
+        radial-gradient(circle at 35% 30%, #ffffff 0%, #f3f6ff 24%, var(--slot-empty) 60%, #ccd8f6 100%);
+      border: 2px solid rgba(255,255,255,0.14);
+      box-shadow: inset 0 6px 12px rgba(0,0,0,0.18);
+    }
+    .slot.red {
+      background: radial-gradient(circle at 35% 30%, #ff9f92 0%, #f65d4b 28%, var(--red) 68%, #971d16 100%);
+    }
+    .slot.yellow {
+      background: radial-gradient(circle at 35% 30%, #fff4aa 0%, #f8df7a 34%, var(--yellow) 72%, #c59015 100%);
+    }
+    .slot.pending-yellow {
+      background: radial-gradient(circle at 35% 30%, #fff9ca 0%, #fff09f 36%, #f7d96e 70%, #d7a92b 100%);
+      opacity: 0.84;
+      box-shadow: inset 0 4px 10px rgba(120,90,0,0.12), 0 0 0 3px rgba(244,197,66,0.28);
+    }
+    .slot.clickable {
+      cursor: pointer;
+      transition: transform 120ms ease, opacity 120ms ease;
+    }
+    .slot.clickable:hover {
+      transform: scale(1.02);
     }
     .legend {
       display: flex;
       gap: 12px;
       flex-wrap: wrap;
-      margin-top: 12px;
       color: var(--muted);
-      font-size: 0.86rem;
+      font-size: 0.82rem;
     }
     .legend-chip {
       display: inline-flex;
       align-items: center;
       gap: 8px;
     }
-    .legend-disc {
-      width: 14px;
-      height: 14px;
+    .legend-dot {
+      width: 12px;
+      height: 12px;
       border-radius: 999px;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
     }
-    .legend-disc.red { background: var(--red); }
-    .legend-disc.yellow { background: var(--yellow); }
-    .legend-disc.empty { background: var(--slot-empty); border: 1px solid #cad7ec; }
-    .meta {
-      display: grid;
-      gap: 4px;
-    }
-    .meta-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 10px 0;
-      border-bottom: 1px solid #edf0f5;
-    }
-    .meta-row:last-child {
-      border-bottom: 0;
-      padding-bottom: 0;
-    }
-    .meta-label {
-      color: var(--muted);
-      font-size: 0.9rem;
-    }
-    .meta-value {
-      font-weight: 700;
-      text-align: right;
-    }
+    .legend-dot.red { background: var(--red); }
+    .legend-dot.yellow { background: var(--yellow); }
+    .legend-dot.empty { background: var(--slot-empty); border: 1px solid #a8badf; }
     .state-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-      margin-top: 14px;
+      gap: 10px;
     }
-    .state-block {
-      border: 1px solid var(--line);
-      background: #fafbfc;
+    .state-box {
       padding: 12px;
-      border-radius: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--card-soft);
     }
-    .state-block h3 {
+    .state-box h3 {
       margin: 0 0 8px;
-      font-size: 0.78rem;
+      font-size: 0.74rem;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
+      letter-spacing: 0.14em;
+      color: #8fa7d4;
     }
     .state-kv {
       display: grid;
       gap: 6px;
     }
-    .state-kv-row {
+    .state-row {
       display: flex;
       justify-content: space-between;
-      gap: 10px;
-      font-size: 0.9rem;
+      gap: 12px;
+      font-size: 0.88rem;
     }
-    .state-kv-row span:first-child {
+    .state-row span:first-child {
       color: var(--muted);
     }
-    .mono {
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-      font-size: 0.84rem;
+    .state-row strong {
+      text-align: right;
+    }
+    .controls {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
+    }
+    button {
+      appearance: none;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 11px 13px;
+      font: inherit;
+      font-weight: 700;
+      color: white;
+      background: var(--accent);
+      cursor: pointer;
+      transition: opacity 120ms ease, transform 120ms ease;
+    }
+    button:hover {
+      opacity: 0.96;
+      transform: translateY(-1px);
+    }
+    button.warning { background: var(--yellow); color: #271800; }
+    button.danger { background: var(--red); }
+    button.ok { background: var(--ok); }
+    button.secondary { background: #42526f; }
+    .confirm-card {
+      border-radius: 8px;
+      border: 1px solid var(--line-strong);
+      background: rgba(255,255,255,0.04);
+      padding: 16px;
+    }
+    .confirm-card.hidden {
+      display: none;
+    }
+    .confirm-title {
+      margin: 0 0 8px;
+      font-size: 1rem;
+      letter-spacing: -0.02em;
+    }
+    .confirm-copy {
+      margin: 0 0 12px;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 0.92rem;
     }
     .thinking::after {
       content: "";
@@ -436,116 +431,114 @@ PAGE_HTML = """
       75% { content: "..."; }
       100% { content: ""; }
     }
-    input[type=number] {
-      width: 100%;
-      box-sizing: border-box;
-      border-radius: 12px;
-      border: 1px solid var(--line-strong);
-      padding: 10px 12px;
-      font: inherit;
-      margin-top: 8px;
-      background: rgba(255,255,255,0.84);
-    }
-    .muted {
-      color: var(--muted);
-    }
     .footer-note {
       margin-top: 14px;
       text-align: center;
       color: var(--muted);
-      font-size: 0.85rem;
+      font-size: 0.8rem;
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="hero">
-      <h1>Connect4 Control</h1>
+    <div class="masthead">
+      <div class="kicker">Live Match Console</div>
+      <h1>Connect4 Broadcast Desk</h1>
+      <p class="sub">A live control surface for state, move confirmation, sorter control, and real-time game flow.</p>
     </div>
 
-    <div class="hero-grid">
+    <div class="layout">
       <div class="stack">
-        <div class="card">
-          <div id="turnBanner" class="banner">
-            <div class="kicker">Game Flow</div>
-            <h2 id="bannerTitle">Idle</h2>
-            <p id="bannerText">Start the game loop when you're ready.</p>
+        <div class="panel hero-panel">
+          <div class="broadcast-banner">
+            <div class="banner-top">
+              <div class="banner-label">Game Feed</div>
+              <div class="live-pill">Live</div>
+            </div>
+            <div id="turnBanner" class="banner-main">
+              <div id="bannerTitle" class="banner-title">Idle</div>
+              <div id="bannerText" class="banner-copy">Start the game loop when you're ready.</div>
+            </div>
           </div>
+        </div>
+
+        <div class="panel board-card">
+          <div class="section-title">Board View</div>
           <div class="cols"><div>6</div><div>5</div><div>4</div><div>3</div><div>2</div><div>1</div><div>0</div></div>
           <div id="board" class="board"></div>
           <div class="legend">
-            <div class="legend-chip"><span class="legend-disc yellow"></span><span>You / Yellow</span></div>
-            <div class="legend-chip"><span class="legend-disc red"></span><span>Computer / Red</span></div>
-            <div class="legend-chip"><span class="legend-disc empty"></span><span>Empty</span></div>
+            <div class="legend-chip"><span class="legend-dot yellow"></span><span>Player / Yellow</span></div>
+            <div class="legend-chip"><span class="legend-dot red"></span><span>Computer / Red</span></div>
+            <div class="legend-chip"><span class="legend-dot empty"></span><span>Empty</span></div>
           </div>
         </div>
       </div>
 
       <div class="stack">
-        <div class="card">
-          <h2>System</h2>
-          <div id="pills"></div>
-          <div class="meta">
-            <div class="meta-row"><div class="meta-label">Status</div><div id="metaStatus" class="meta-value">idle</div></div>
-            <div class="meta-row"><div class="meta-label">Tracker</div><div id="metaTracker" class="meta-value">calibrating</div></div>
-            <div class="meta-row"><div class="meta-label">Camera</div><div id="metaCamera" class="meta-value">n/a</div></div>
-            <div class="meta-row"><div class="meta-label">Suggested Red</div><div id="metaRed" class="meta-value">-</div></div>
-          </div>
+        <div class="panel">
+          <div class="section-title">Live Status</div>
+          <div id="pills" class="chip-row"></div>
           <div class="state-grid">
-            <div class="state-block">
+            <div class="state-box">
               <h3>Game State</h3>
               <div class="state-kv">
-                <div class="state-kv-row"><span>Running</span><strong id="stateGameRunning">no</strong></div>
-                <div class="state-kv-row"><span>Phase</span><strong id="stateGamePhase">idle</strong></div>
-                <div class="state-kv-row"><span>Turn</span><strong id="stateTurnState">idle</strong></div>
-                <div class="state-kv-row"><span>Winner</span><strong id="stateWinner">none</strong></div>
+                <div class="state-row"><span>Status</span><strong id="metaStatus">idle</strong></div>
+                <div class="state-row"><span>Phase</span><strong id="stateGamePhase">idle</strong></div>
+                <div class="state-row"><span>Turn</span><strong id="stateTurnState">idle</strong></div>
+                <div class="state-row"><span>Winner</span><strong id="stateWinner">none</strong></div>
+                <div class="state-row"><span>Running</span><strong id="stateGameRunning">no</strong></div>
               </div>
             </div>
-            <div class="state-block">
-              <h3>Subsystems</h3>
+            <div class="state-box">
+              <h3>Detection</h3>
               <div class="state-kv">
-                <div class="state-kv-row"><span>Sorting enabled</span><strong id="stateSortingEnabled">no</strong></div>
-                <div class="state-kv-row"><span>Sorter process</span><strong id="stateSorterRunning">off</strong></div>
-                <div class="state-kv-row"><span>Tracker active</span><strong id="stateTrackerActive">no</strong></div>
-                <div class="state-kv-row"><span>Calibrated</span><strong id="stateTrackerCalibrated">no</strong></div>
+                <div class="state-row"><span>Tracker</span><strong id="metaTracker">calibrating</strong></div>
+                <div class="state-row"><span>Tracker active</span><strong id="stateTrackerActive">no</strong></div>
+                <div class="state-row"><span>Camera</span><strong id="metaCamera">n/a</strong></div>
+                <div class="state-row"><span>Awaiting</span><strong id="stateAwaiting">none</strong></div>
+                <div class="state-row"><span>Updated</span><strong id="stateUpdated">-</strong></div>
               </div>
             </div>
-            <div class="state-block">
+            <div class="state-box">
               <h3>Pieces</h3>
               <div class="state-kv">
-                <div class="state-kv-row"><span>Confirmed yellow</span><strong id="stateYellowCount">0</strong></div>
-                <div class="state-kv-row"><span>Confirmed red</span><strong id="stateRedCount">0</strong></div>
-                <div class="state-kv-row"><span>Pending yellow</span><strong id="statePendingYellow">0</strong></div>
-                <div class="state-kv-row"><span>Awaiting</span><strong id="stateAwaiting">none</strong></div>
+                <div class="state-row"><span>Yellow confirmed</span><strong id="stateYellowCount">0</strong></div>
+                <div class="state-row"><span>Red confirmed</span><strong id="stateRedCount">0</strong></div>
+                <div class="state-row"><span>Pending yellow</span><strong id="statePendingYellow">0</strong></div>
+                <div class="state-row"><span>Yellow column</span><strong id="stateYellowCol">-</strong></div>
+                <div class="state-row"><span>Red column</span><strong id="stateRedCol">-</strong></div>
               </div>
             </div>
-            <div class="state-block">
-              <h3>Runtime</h3>
+            <div class="state-box">
+              <h3>Subsystems</h3>
               <div class="state-kv">
-                <div class="state-kv-row"><span>Camera source</span><strong id="stateCameraSource" class="mono">n/a</strong></div>
-                <div class="state-kv-row"><span>Yellow column</span><strong id="stateYellowCol">-</strong></div>
-                <div class="state-kv-row"><span>Red column</span><strong id="stateRedCol">-</strong></div>
-                <div class="state-kv-row"><span>Updated</span><strong id="stateUpdated" class="mono">-</strong></div>
+                <div class="state-row"><span>Sorting enabled</span><strong id="stateSortingEnabled">no</strong></div>
+                <div class="state-row"><span>Sorter process</span><strong id="stateSorterRunning">off</strong></div>
+                <div class="state-row"><span>Camera source</span><strong id="stateCameraSource">n/a</strong></div>
+                <div class="state-row"><span>Suggested red</span><strong id="metaRed">-</strong></div>
+                <div class="state-row"><span>Tracker calibrated</span><strong id="stateTrackerCalibrated">no</strong></div>
               </div>
             </div>
           </div>
         </div>
 
-        <div id="yellowCard" class="confirm-card hidden">
-          <h2 class="confirm-title">Yellow Confirmation</h2>
-          <p id="yellowCopy" class="confirm-copy">Tap the highlighted yellow slot to confirm it, or tap a different slot in the correct column to override it.</p>
+        <div id="yellowCard" class="panel confirm-card hidden">
+          <div class="section-title">Yellow Confirmation</div>
+          <div class="confirm-title">Check player move</div>
+          <div id="yellowCopy" class="confirm-copy">Tap the highlighted yellow slot to confirm it, or tap another slot in the correct column to override it.</div>
         </div>
 
-        <div id="redCard" class="confirm-card hidden">
-          <h2 class="confirm-title">Red Placement</h2>
-          <p id="redCopy" class="confirm-copy">The computer has chosen a red column. Place the piece, then confirm it here.</p>
+        <div id="redCard" class="panel confirm-card hidden">
+          <div class="section-title">Red Placement</div>
+          <div class="confirm-title">Place the computer piece</div>
+          <div id="redCopy" class="confirm-copy">The computer has chosen a red column. Place the piece, then confirm it here.</div>
           <div class="controls">
             <button class="warning" onclick="confirmRed()">Red Piece Placed</button>
           </div>
         </div>
 
-        <div class="card">
-          <h2>Game Controls</h2>
+        <div class="panel">
+          <div class="section-title">Control Deck</div>
           <div class="controls">
             <button onclick="startGame()">Start Game</button>
             <button class="warning" onclick="resetGame()">Reset Game</button>
@@ -553,8 +546,8 @@ PAGE_HTML = """
           </div>
         </div>
 
-        <div class="card">
-          <h2>Sorting Controls</h2>
+        <div class="panel">
+          <div class="section-title">Sorting Desk</div>
           <div class="controls">
             <button class="ok" onclick="enableSorting()">Enable Sorting</button>
             <button class="secondary" onclick="disableSorting()">Disable Sorting</button>
@@ -562,6 +555,7 @@ PAGE_HTML = """
         </div>
       </div>
     </div>
+
     <div class="footer-note">
       <span id="versionBadge">version: loading</span>
     </div>
@@ -676,71 +670,66 @@ PAGE_HTML = """
 
     function renderPills(state) {
       const pills = [];
-      pills.push(`<span class="status-pill">status: ${state.game_status}</span>`);
-      pills.push(`<span class="status-pill">sorting: ${state.sorter_running ? "on" : "off"}</span>`);
-      pills.push(`<span class="status-pill">camera: ${state.camera_source || "n/a"}</span>`);
-      pills.push(`<span class="status-pill">tracker: ${state.tracker_calibrated ? "calibrated" : "calibrating"}</span>`);
-      if (state.suggested_red_column !== null) {
-        pills.push(`<span class="status-pill">red column: ${state.suggested_red_column}</span>`);
-      }
-      if (state.detected_yellow_column !== null) {
-        pills.push(`<span class="status-pill">yellow column: ${state.detected_yellow_column}</span>`);
-      }
+      pills.push(`<span class="chip">status: ${state.game_status}</span>`);
+      pills.push(`<span class="chip">phase: ${state.game_phase || "idle"}</span>`);
+      pills.push(`<span class="chip">turn: ${state.turn_state || "idle"}</span>`);
+      pills.push(`<span class="chip">sorting: ${state.sorter_running ? "running" : "off"}</span>`);
+      pills.push(`<span class="chip">tracker: ${state.tracker_calibrated ? "calibrated" : "calibrating"}</span>`);
       document.getElementById("pills").innerHTML = pills.join("");
     }
 
     function bannerConfig(state) {
       if (state.awaiting_confirmation === "yellow") {
         return {
-          className: "banner waiting",
+          className: "banner-main waiting",
           title: `Yellow move detected in column ${state.detected_yellow_column ?? "-"}`,
           text: state.prompt || "Confirm the detected yellow move or correct it.",
         };
       }
       if (state.awaiting_confirmation === "red") {
         return {
-          className: "banner waiting",
-          title: `Place RED in column ${state.suggested_red_column ?? "-"}`,
+          className: "banner-main waiting",
+          title: `Place red in column ${state.suggested_red_column ?? "-"}`,
           text: state.prompt || "Drop the red piece on the real board and confirm it here.",
         };
       }
       if (state.game_status === "thinking") {
         return {
-          className: "banner thinking",
+          className: "banner-main thinking",
           title: "Computer is thinking",
-          text: state.message || "Choosing where RED should go next.",
+          text: state.message || "Choosing where red should go next.",
         };
       }
       if (state.game_status === "waiting_human_move") {
         return {
-          className: "banner ready",
-          title: "Your turn",
-          text: state.prompt || "Drop a YELLOW piece or enter the column manually.",
+          className: "banner-main ready",
+          title: "Player turn",
+          text: state.prompt || "Drop a yellow piece and hold the board steady.",
         };
       }
       if (state.game_status === "calibrating") {
         return {
-          className: "banner",
+          className: "banner-main",
           title: "Calibrating board",
           text: state.message || "Keep the board visible and empty for a moment.",
         };
       }
       if (state.game_status === "finished") {
         return {
-          className: "banner ready",
-          title: state.winner === 1 ? "RED wins" : state.winner === 2 ? "YELLOW wins" : "Game finished",
-          text: state.message || "Use reset to start a fresh round.",
+          className: "banner-main ready",
+          title: state.winner === 1 ? "Red wins" : state.winner === 2 ? "Yellow wins" : "Game finished",
+          text: state.message || "Reset when you're ready for the next round.",
         };
       }
       if (state.game_status === "error") {
         return {
-          className: "banner waiting",
+          className: "banner-main waiting",
           title: "Something needs attention",
           text: state.error || state.message || "Check the service logs and current hardware state.",
         };
       }
       return {
-        className: "banner",
+        className: "banner-main",
         title: "Idle",
         text: state.message || "Start the game loop when you're ready.",
       };
@@ -760,18 +749,18 @@ PAGE_HTML = """
       text.textContent = config.text;
     }
 
+    function winnerLabel(value) {
+      if (value === 1) return "red";
+      if (value === 2) return "yellow";
+      return "none";
+    }
+
     function renderMeta(state) {
       document.getElementById("metaStatus").textContent = state.game_status;
       document.getElementById("metaTracker").textContent = state.tracker_calibrated ? "calibrated" : "calibrating";
       document.getElementById("metaCamera").textContent = state.camera_source || "n/a";
       document.getElementById("metaRed").textContent =
         state.suggested_red_column !== null ? state.suggested_red_column : "-";
-    }
-
-    function winnerLabel(value) {
-      if (value === 1) return "red";
-      if (value === 2) return "yellow";
-      return "none";
     }
 
     function renderStateBlocks(state) {
@@ -814,7 +803,6 @@ PAGE_HTML = """
       if (state.awaiting_confirmation === "red") {
         redCopy.textContent = state.prompt || "Place the red piece and confirm it here.";
       }
-
       if (state.awaiting_confirmation !== "yellow" && state.awaiting_confirmation !== "red") {
         yellowCopy.textContent = "Detected a yellow move. Confirm it or correct the column.";
         redCopy.textContent = "The computer has chosen a red column. Place the piece, then confirm it here.";
