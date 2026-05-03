@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -9,6 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
+WEB_CONTROL_VERSION = "web-ui-2026-05-03a"
 
 
 class StartGameRequest(BaseModel):
@@ -32,6 +31,15 @@ class ManualMoveRequest(BaseModel):
 @app.get("/api/state")
 def api_state():
     return controller.get_state()
+
+
+@app.get("/health")
+def health():
+    return {
+        "ok": True,
+        "service": "codenect4-web",
+        "version": WEB_CONTROL_VERSION,
+    }
 
 
 @app.post("/api/game/start")
@@ -108,30 +116,31 @@ PAGE_HTML = """
   <title>Codenect4 Control</title>
   <style>
     :root {
-      --bg: #f4ecd9;
-      --card: rgba(255, 251, 243, 0.92);
-      --card-strong: #fffdf8;
+      --bg: #f6f7fb;
+      --card: rgba(255, 255, 255, 0.94);
+      --card-strong: #ffffff;
       --ink: #1d2939;
       --muted: #667085;
-      --accent: #1d4ed8;
+      --accent: #2563eb;
       --accent-deep: #17378c;
-      --warn: #d97706;
-      --danger: #b42318;
-      --ok: #166534;
-      --line: #decfb1;
-      --line-strong: #cdbb94;
-      --red: #d92d20;
-      --yellow: #f6c644;
-      --board-blue-top: #3568d4;
-      --board-blue-bottom: #163983;
-      --slot-empty: #eff4ff;
+      --warn: #c26b12;
+      --danger: #c0362c;
+      --ok: #137a6f;
+      --line: #e4e7ec;
+      --line-strong: #d0d5dd;
+      --red: #df473c;
+      --yellow: #f3c94f;
+      --board-blue-top: #2f63da;
+      --board-blue-bottom: #173a88;
+      --slot-empty: #eff3ff;
     }
     body {
       margin: 0;
-      font-family: "Trebuchet MS", "Avenir Next", sans-serif;
+      font-family: Inter, "Avenir Next", "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at top left, rgba(255,255,255,0.7) 0%, transparent 34%),
-        linear-gradient(180deg, #dceef8 0%, #f1e4c7 45%, var(--bg) 100%);
+        radial-gradient(circle at top left, rgba(37,99,235,0.08) 0%, transparent 30%),
+        radial-gradient(circle at top right, rgba(19,122,111,0.06) 0%, transparent 24%),
+        linear-gradient(180deg, #eef3ff 0%, var(--bg) 48%, #fbfcfe 100%);
       color: var(--ink);
     }
     .wrap {
@@ -140,21 +149,23 @@ PAGE_HTML = """
       padding: 20px 16px 56px;
     }
     .hero {
-      background:
-        radial-gradient(circle at top left, #ffffff 0%, #faeed2 54%, #f3dbb2 100%);
-      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.8);
       border-radius: 28px;
-      padding: 20px;
-      box-shadow: 0 24px 54px rgba(29, 41, 57, 0.1);
+      padding: 22px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 18px 44px rgba(29, 41, 57, 0.08);
     }
     h1 {
       margin: 0 0 6px;
-      font-size: 2rem;
+      font-size: 2.05rem;
       letter-spacing: 0.02em;
+      font-weight: 760;
     }
     .sub {
       margin: 0;
       color: var(--muted);
+      max-width: 44rem;
     }
     .grid {
       display: grid;
@@ -167,7 +178,7 @@ PAGE_HTML = """
       border: 1px solid var(--line);
       border-radius: 24px;
       padding: 16px;
-      box-shadow: 0 14px 30px rgba(29, 41, 57, 0.08);
+      box-shadow: 0 10px 28px rgba(29, 41, 57, 0.06);
     }
     .stack {
       display: grid;
@@ -190,22 +201,27 @@ PAGE_HTML = """
       grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     }
     button {
-      border: 0;
+      border: 1px solid transparent;
       border-radius: 14px;
       padding: 12px 14px;
       font: inherit;
       font-weight: 700;
-      background: linear-gradient(180deg, #3b82f6 0%, var(--accent) 100%);
+      background: var(--accent);
       color: white;
       cursor: pointer;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 10px 18px rgba(29, 78, 216, 0.2);
+      box-shadow: none;
+      transition: background 120ms ease, transform 120ms ease, opacity 120ms ease;
     }
-    button.secondary { background: linear-gradient(180deg, #667085 0%, #475467 100%); }
-    button.warning { background: linear-gradient(180deg, #f59e0b 0%, var(--warn) 100%); }
-    button.danger { background: linear-gradient(180deg, #d92d20 0%, var(--danger) 100%); }
-    button.ok { background: linear-gradient(180deg, #22c55e 0%, var(--ok) 100%); }
+    button:hover {
+      opacity: 0.96;
+      transform: translateY(-1px);
+    }
+    button.secondary { background: #475467; }
+    button.warning { background: var(--warn); }
+    button.danger { background: var(--danger); }
+    button.ok { background: var(--ok); }
     button.ghost {
-      background: transparent;
+      background: #ffffff;
       color: var(--ink);
       border: 1px solid var(--line-strong);
       box-shadow: none;
@@ -218,19 +234,19 @@ PAGE_HTML = """
       display: inline-block;
       padding: 6px 10px;
       border-radius: 999px;
-      background: #deebff;
-      color: #12356d;
+      background: #f2f4f7;
+      color: #344054;
       font-size: 0.85rem;
       font-weight: 700;
       margin-right: 8px;
       margin-bottom: 8px;
-      border: 1px solid rgba(18, 53, 109, 0.1);
+      border: 1px solid #eaecf0;
     }
     .banner {
       border-radius: 22px;
       padding: 16px 18px;
       border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(255,255,255,0.88) 0%, rgba(250,244,231,0.92) 100%);
+      background: rgba(255, 255, 255, 0.94);
     }
     .banner.kicker {
       display: inline-block;
@@ -250,22 +266,22 @@ PAGE_HTML = """
       color: var(--muted);
     }
     .banner.thinking {
-      background: linear-gradient(180deg, #edf4ff 0%, #dfeaff 100%);
-      border-color: #bfd2ff;
+      background: #eef4ff;
+      border-color: #cadeff;
     }
     .banner.waiting {
-      background: linear-gradient(180deg, #fff6db 0%, #f9ebba 100%);
-      border-color: #e8cf7a;
+      background: #fff6e8;
+      border-color: #f2d39c;
     }
     .banner.ready {
-      background: linear-gradient(180deg, #eafbf0 0%, #d9f3e3 100%);
-      border-color: #a6d6b7;
+      background: #ebfaf7;
+      border-color: #b6e2d8;
     }
     .confirm-card {
       border-radius: 22px;
       padding: 16px;
       border: 1px solid var(--line-strong);
-      background: linear-gradient(180deg, #fffdf8 0%, #f7efe2 100%);
+      background: #ffffff;
     }
     .confirm-card.hidden {
       display: none;
@@ -289,7 +305,7 @@ PAGE_HTML = """
         linear-gradient(180deg, var(--board-blue-top) 0%, var(--board-blue-bottom) 100%);
       padding: 16px;
       border-radius: 26px;
-      box-shadow: inset 0 2px 0 rgba(255,255,255,0.15), 0 16px 30px rgba(22,57,131,0.28);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 14px 28px rgba(22,57,131,0.2);
     }
     .slot {
       aspect-ratio: 1;
@@ -307,6 +323,20 @@ PAGE_HTML = """
     .slot.yellow {
       background: radial-gradient(circle at 35% 30%, #fff4a8 0%, #fbe171 32%, var(--yellow) 70%, #c79212 100%);
     }
+    .slot.pending-yellow {
+      background: radial-gradient(circle at 35% 30%, #fffad1 0%, #fff2a0 34%, #f7da6d 68%, #e0bf49 100%);
+      opacity: 0.78;
+      border-color: rgba(255,255,255,0.42);
+      box-shadow:
+        inset 0 4px 10px rgba(120,90,0,0.15),
+        0 0 0 3px rgba(243, 201, 79, 0.32);
+    }
+    .slot.clickable {
+      cursor: pointer;
+    }
+    .slot.clickable:hover {
+      transform: scale(1.03);
+    }
     .cols {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
@@ -314,7 +344,7 @@ PAGE_HTML = """
       margin-top: 6px;
       text-align: center;
       font-weight: 700;
-      color: var(--accent-deep);
+      color: #35518a;
       letter-spacing: 0.04em;
     }
     .legend {
@@ -348,7 +378,7 @@ PAGE_HTML = """
       justify-content: space-between;
       gap: 12px;
       padding: 10px 0;
-      border-bottom: 1px solid rgba(205,187,148,0.45);
+      border-bottom: 1px solid #edf0f5;
     }
     .meta-row:last-child {
       border-bottom: 0;
@@ -390,13 +420,19 @@ PAGE_HTML = """
       color: var(--muted);
       font-size: 0.92rem;
     }
+    .footer-note {
+      margin-top: 18px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="hero">
-      <h1>Codenect4 Control</h1>
-      <p class="sub">Phone-friendly control surface for the Pi. SSH still works as your fallback path.</p>
+      <h1>Connect4 Control</h1>
+      <p class="sub">A minimal remote control surface for the live game loop, sorter, confirmations, and quick manual overrides.</p>
     </div>
 
     <div class="hero-grid">
@@ -419,11 +455,7 @@ PAGE_HTML = """
 
         <div id="yellowCard" class="confirm-card hidden">
           <h2 class="confirm-title">Confirm Yellow Move</h2>
-          <p id="yellowCopy" class="confirm-copy">Detected a yellow move. Confirm it or correct the column.</p>
-          <div class="controls">
-            <button class="ok" onclick="confirmYellow(true)">Looks Right</button>
-            <button class="ghost" onclick="focusManual()">Correct It</button>
-          </div>
+          <p id="yellowCopy" class="confirm-copy">Tap the highlighted yellow slot to confirm it, or tap a different slot in the correct column to override it.</p>
         </div>
 
         <div id="redCard" class="confirm-card hidden">
@@ -454,7 +486,6 @@ PAGE_HTML = """
             <button class="warning" onclick="resetGame()">Reset Game</button>
             <button class="danger" onclick="stopGame()">Stop Game</button>
           </div>
-          <p class="section-note">SSH still works in parallel if you need to drop back to the terminal.</p>
         </div>
 
         <div class="card">
@@ -476,10 +507,14 @@ PAGE_HTML = """
         </div>
       </div>
     </div>
+    <div class="footer-note">
+      <span id="versionBadge">version: loading</span>
+    </div>
   </div>
 
   <script>
     let latestState = null;
+    let healthState = null;
 
     async function api(path, method = "GET", body = null) {
       const res = await fetch(path, {
@@ -543,17 +578,60 @@ PAGE_HTML = """
       document.getElementById("manualCol").focus();
     }
 
+    function getPendingYellowCells(state) {
+      if (!state || state.awaiting_confirmation !== "yellow" || !state.current_board || !state.confirmed_board) {
+        return [];
+      }
+      const pending = [];
+      for (let r = 0; r < state.current_board.length; r++) {
+        for (let c = 0; c < state.current_board[r].length; c++) {
+          if (state.current_board[r][c] === 2 && state.confirmed_board[r][c] !== 2) {
+            pending.push({ row: r, col: c });
+          }
+        }
+      }
+      return pending;
+    }
+
+    async function handleBoardClick(visibleColumn, isPendingCell) {
+      if (!latestState || latestState.awaiting_confirmation !== "yellow") return;
+      if (isPendingCell) {
+        await confirmYellow(true);
+        return;
+      }
+      await api("/api/game/yellow-confirm", "POST", { accept: false, column: visibleColumn });
+      await refresh();
+    }
+
     function renderBoard(board) {
       const root = document.getElementById("board");
       root.innerHTML = "";
       if (!board) return;
       const mirrored = board.map(row => [...row].reverse());
-      for (const row of mirrored) {
-        for (const cell of row) {
+      const pendingCells = getPendingYellowCells(latestState);
+      const pendingKeys = new Set(pendingCells.map(cell => `${cell.row}:${cell.col}`));
+      for (let rowIdx = 0; rowIdx < mirrored.length; rowIdx++) {
+        const row = mirrored[rowIdx];
+        for (let colIdx = 0; colIdx < row.length; colIdx++) {
+          const cell = row[colIdx];
           const slot = document.createElement("div");
           slot.className = "slot";
           if (cell === 1) slot.classList.add("red");
           if (cell === 2) slot.classList.add("yellow");
+          const originalCol = row.length - 1 - colIdx;
+          const key = `${rowIdx}:${originalCol}`;
+          const isPending = pendingKeys.has(key);
+          if (isPending) {
+            slot.classList.remove("yellow");
+            slot.classList.add("pending-yellow");
+          }
+          if (latestState && latestState.awaiting_confirmation === "yellow") {
+            slot.classList.add("clickable");
+            slot.title = isPending
+              ? `Confirm detected yellow in column ${originalCol}`
+              : `Override to column ${originalCol}`;
+            slot.addEventListener("click", () => handleBoardClick(originalCol, isPending));
+          }
           root.appendChild(slot);
         }
       }
@@ -621,7 +699,7 @@ PAGE_HTML = """
         return {
           className: "banner waiting",
           title: "Something needs attention",
-          text: state.error || state.message || "Check the Pi logs or use SSH as fallback.",
+          text: state.error || state.message || "Check the service logs and current hardware state.",
         };
       }
       return {
@@ -663,7 +741,7 @@ PAGE_HTML = """
       redCard.classList.toggle("hidden", state.awaiting_confirmation !== "red");
 
       if (state.awaiting_confirmation === "yellow") {
-        yellowCopy.textContent = state.prompt || "Confirm the yellow move or correct the column.";
+        yellowCopy.textContent = state.prompt || "Tap the highlighted yellow slot to confirm it, or tap a different slot to override it.";
       }
       if (state.awaiting_confirmation === "red") {
         redCopy.textContent = state.prompt || "Place the red piece and confirm it here.";
@@ -684,7 +762,19 @@ PAGE_HTML = """
       renderBoard(latestState.current_board);
     }
 
+    async function refreshHealth() {
+      try {
+        healthState = await api("/health");
+        document.getElementById("versionBadge").textContent =
+          `service: ${healthState.service} | version: ${healthState.version}`;
+      } catch (err) {
+        document.getElementById("versionBadge").textContent = "service health unavailable";
+      }
+    }
+
+    refreshHealth();
     refresh();
+    setInterval(refreshHealth, 5000);
     setInterval(refresh, 800);
   </script>
 </body>

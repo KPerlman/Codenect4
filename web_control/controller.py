@@ -42,6 +42,7 @@ class SharedState:
     sorting_enabled: bool = False
     sorter_running: bool = False
     current_board: list[list[int]] = field(default_factory=lambda: [[0] * 7 for _ in range(6)])
+    confirmed_board: list[list[int]] = field(default_factory=lambda: [[0] * 7 for _ in range(6)])
     suggested_red_column: int | None = None
     detected_yellow_column: int | None = None
     awaiting_confirmation: str | None = None
@@ -61,6 +62,7 @@ class SharedState:
             "sorting_enabled": self.sorting_enabled,
             "sorter_running": self.sorter_running,
             "current_board": self.current_board,
+            "confirmed_board": self.confirmed_board,
             "suggested_red_column": self.suggested_red_column,
             "detected_yellow_column": self.detected_yellow_column,
             "awaiting_confirmation": self.awaiting_confirmation,
@@ -222,7 +224,12 @@ class GameLoopWorker:
 
     def _sync_tracker_board(self, tracker, board_state):
         tracker.board_state = np.copy(board_state)
-        self.controller._update_state(current_board=board_to_lists(board_state), winner=board_winner(board_state))
+        board_list = board_to_lists(board_state)
+        self.controller._update_state(
+            current_board=board_list,
+            confirmed_board=board_list,
+            winner=board_winner(board_state),
+        )
 
     def _drain_commands(self):
         commands = []
