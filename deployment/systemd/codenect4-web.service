@@ -1,0 +1,17 @@
+[Unit]
+Description=Codenect4 Web Control
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=__SERVICE_USER__
+WorkingDirectory=__REPO_DIR__
+ExecStart=__REPO_DIR__/venv/bin/python __REPO_DIR__/web_control_server.py
+Restart=always
+RestartSec=3
+TimeoutStopSec=5
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
+
