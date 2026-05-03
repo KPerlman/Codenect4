@@ -27,6 +27,15 @@ from connect4_vision import Connect4Tracker
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+SERVO_ZERO_OFFSETS = [4, 5, 4, 4, 4, 3, 0]
+
+
+def move_servo_zero_position(pca, channel, angle, max_angle=180, offset=0):
+    pulse_min = 450
+    pulse_max = 2550
+    corrected_angle = max(0, min(max_angle, angle + offset))
+    pulse = pulse_min + (corrected_angle / float(max_angle)) * (pulse_max - pulse_min)
+    pca.channels[channel].duty_cycle = int(pulse / 20000 * 65535)
 
 
 def board_to_lists(board_state):
@@ -205,6 +214,34 @@ class RobotWebController:
         if self._game_commands is None:
             return self.get_state()
         self._game_commands.put({"type": "manual_human_move", "column": column})
+        return self.get_state()
+
+    def zero_servos(self):
+        try:
+            import board
+            import busio
+            from adafruit_pca9685 import PCA9685
+
+            i2c = busio.I2C(board.SCL, board.SDA)
+            pca = PCA9685(i2c)
+            pca.frequency = 50
+            try:
+                for channel in range(7):
+                    move_servo_zero_position(
+                        pca,
+                        channel,
+                        0,
+                        offset=SERVO_ZERO_OFFSETS[channel],
+                    )
+                time.sleep(0.15)
+            finally:
+                pca.deinit()
+            self._update_state(message="All servos moved to zero", error=None)
+        except Exception as exc:
+            self._update_state(
+                error=f"Failed to zero servos: {exc}",
+                message="Servo zero command failed",
+            )
         return self.get_state()
 
     def _finalize_game_stop(self, message, error=None):

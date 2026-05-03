@@ -87,6 +87,11 @@ def api_disable_sorting():
     return controller.disable_sorting()
 
 
+@app.post("/api/servos/zero")
+def api_zero_servos():
+    return controller.zero_servos()
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return HTMLResponse(PAGE_HTML)
@@ -514,6 +519,13 @@ PAGE_HTML = """
             <button class="secondary" onclick="disableSorting()">Disable Sorting</button>
           </div>
         </div>
+
+        <div class="panel section">
+          <div class="section-title">Servo Controls</div>
+          <div class="controls">
+            <button class="secondary" onclick="zeroServos()">Zero All Servos</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -557,6 +569,11 @@ PAGE_HTML = """
 
     async function disableSorting() {
       await api("/api/sorting/disable", "POST");
+      await refresh();
+    }
+
+    async function zeroServos() {
+      await api("/api/servos/zero", "POST");
       await refresh();
     }
 
