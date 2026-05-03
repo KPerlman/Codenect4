@@ -291,6 +291,16 @@ class RobotWebController:
                     move_servo_zero_position(
                         pca,
                         channel,
+                        45,
+                        max_angle=SERVO_MAX_ANGLES[channel],
+                        offset=SERVO_OFFSETS[channel],
+                    )
+                time.sleep(0.5)
+
+                for channel in range(7):
+                    move_servo_zero_position(
+                        pca,
+                        channel,
                         0,
                         max_angle=SERVO_MAX_ANGLES[channel],
                         offset=SERVO_OFFSETS[channel],
@@ -298,7 +308,7 @@ class RobotWebController:
                 time.sleep(0.85)
             finally:
                 pca.deinit()
-            self._update_state(message="All servos moved to zero", error=None)
+            self._update_state(message="All servos swept to 45 and returned to zero", error=None)
         except Exception as exc:
             self._update_state(
                 error=f"Failed to zero servos: {exc}",
