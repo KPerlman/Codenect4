@@ -39,12 +39,17 @@ def board_to_lists(board_state):
 class SharedState:
     game_running: bool = False
     game_status: str = "idle"
+    game_phase: str = "idle"
+    turn_state: str = "idle"
     sorting_enabled: bool = False
     sorter_running: bool = False
     current_board: list[list[int]] = field(default_factory=lambda: [[0] * 7 for _ in range(6)])
     confirmed_board: list[list[int]] = field(default_factory=lambda: [[0] * 7 for _ in range(6)])
     suggested_red_column: int | None = None
     detected_yellow_column: int | None = None
+    confirmed_red_count: int = 0
+    confirmed_yellow_count: int = 0
+    pending_yellow_count: int = 0
     awaiting_confirmation: str | None = None
     prompt: str | None = None
     message: str = "Idle"
@@ -59,12 +64,17 @@ class SharedState:
         return {
             "game_running": self.game_running,
             "game_status": self.game_status,
+            "game_phase": self.game_phase,
+            "turn_state": self.turn_state,
             "sorting_enabled": self.sorting_enabled,
             "sorter_running": self.sorter_running,
             "current_board": self.current_board,
             "confirmed_board": self.confirmed_board,
             "suggested_red_column": self.suggested_red_column,
             "detected_yellow_column": self.detected_yellow_column,
+            "confirmed_red_count": self.confirmed_red_count,
+            "confirmed_yellow_count": self.confirmed_yellow_count,
+            "pending_yellow_count": self.pending_yellow_count,
             "awaiting_confirmation": self.awaiting_confirmation,
             "prompt": self.prompt,
             "message": self.message,
@@ -225,10 +235,15 @@ class GameLoopWorker:
     def _sync_tracker_board(self, tracker, board_state):
         tracker.board_state = np.copy(board_state)
         board_list = board_to_lists(board_state)
+        confirmed_red = int(np.count_nonzero(board_state == 1))
+        confirmed_yellow = int(np.count_nonzero(board_state == 2))
         self.controller._update_state(
             current_board=board_list,
             confirmed_board=board_list,
             winner=board_winner(board_state),
+            confirmed_red_count=confirmed_red,
+            confirmed_yellow_count=confirmed_yellow,
+            pending_yellow_count=0,
         )
 
     def _drain_commands(self):
@@ -249,10 +264,16 @@ class GameLoopWorker:
         return None
 
     def _await_yellow_confirmation(self, pending_board, pending_visible_col):
+        pending_yellow_count = int(np.count_nonzero(pending_board == 2)) - int(
+            np.count_nonzero(np.asarray(self.confirmed_board) == 2)
+        )
         self.controller._update_state(
             game_status="awaiting_yellow_confirmation",
+            game_phase="human_confirmation",
+            turn_state="human_pending_confirmation",
             awaiting_confirmation="yellow",
             detected_yellow_column=pending_visible_col,
+            pending_yellow_count=max(0, pending_yellow_count),
             prompt=(
                 f"Detected YELLOW in column {pending_visible_col}. "
                 "Confirm it or enter the correct column in the app."
@@ -283,6 +304,8 @@ class GameLoopWorker:
     def _await_red_confirmation(self, ai_expected_board, ai_visible_column):
         self.controller._update_state(
             game_status="awaiting_red_confirmation",
+            game_phase="robot_confirmation",
+            turn_state="robot_waiting_for_placement",
             awaiting_confirmation="red",
             suggested_red_column=ai_visible_column,
             prompt=f"Place RED in column {ai_visible_column}, then confirm in the app.",
@@ -322,6 +345,8 @@ class GameLoopWorker:
                 camera_source=str(camera_source),
                 game_running=True,
                 game_status="calibrating",
+                game_phase="calibrating",
+                turn_state="booting",
                 message="Waiting for camera and tracker calibration",
                 error=None,
             )
@@ -383,10 +408,20 @@ class GameLoopWorker:
                     tracker_calibrated=tracker.is_calibrated,
                     current_board=board_to_lists(board_copy),
                     winner=tracker.winner,
+                    pending_yellow_count=max(
+                        0,
+                        int(np.count_nonzero(board_copy == 2))
+                        - int(np.count_nonzero(np.asarray(confirmed_board) == 2)) if confirmed_board is not None else 0,
+                    ),
                 )
 
                 if not tracker.is_calibrated:
-                    self.controller._update_state(game_status="calibrating", message="Calibrating empty board")
+                    self.controller._update_state(
+                        game_status="calibrating",
+                        game_phase="calibrating",
+                        turn_state="booting",
+                        message="Calibrating empty board",
+                    )
                     continue
                 if stable_board is None:
                     continue
@@ -397,6 +432,8 @@ class GameLoopWorker:
                     self._sync_tracker_board(tracker, confirmed_board)
                     self.controller._update_state(
                         game_status="waiting_human_move",
+                        game_phase="live",
+                        turn_state="human_turn",
                         awaiting_confirmation=None,
                         prompt="Drop a YELLOW piece, or enter its column in the app.",
                         message="Waiting for YELLOW move",
@@ -417,6 +454,11 @@ class GameLoopWorker:
                             last_seen_board = np.copy(confirmed_board)
                             stable_streak = self.state_streak
                             manual_applied = True
+                            self.controller._update_state(
+                                game_phase="live",
+                                turn_state="human_move_registered",
+                                message=f"Manual YELLOW move recorded in column {command['column']}",
+                            )
                             break
                     elif command["type"] == "stop":
                         self.stop_event.set()
@@ -445,6 +487,8 @@ class GameLoopWorker:
                 if board_winner(confirmed_board) == 2:
                     self.controller._update_state(
                         game_status="finished",
+                        game_phase="complete",
+                        turn_state="game_over",
                         awaiting_confirmation=None,
                         prompt=None,
                         message="YELLOW wins",
@@ -454,6 +498,8 @@ class GameLoopWorker:
                 if board_full(confirmed_board):
                     self.controller._update_state(
                         game_status="finished",
+                        game_phase="complete",
+                        turn_state="game_over",
                         awaiting_confirmation=None,
                         prompt=None,
                         message="Board full: draw",
@@ -462,6 +508,8 @@ class GameLoopWorker:
 
                 self.controller._update_state(
                     game_status="thinking",
+                    game_phase="live",
+                    turn_state="robot_thinking",
                     awaiting_confirmation=None,
                     suggested_red_column=None,
                     prompt="Thinking about RED placement...",
@@ -490,6 +538,8 @@ class GameLoopWorker:
                 if board_winner(confirmed_board) == 1:
                     self.controller._update_state(
                         game_status="finished",
+                        game_phase="complete",
+                        turn_state="game_over",
                         awaiting_confirmation=None,
                         prompt=None,
                         message="RED wins",
@@ -499,6 +549,8 @@ class GameLoopWorker:
                 if board_full(confirmed_board):
                     self.controller._update_state(
                         game_status="finished",
+                        game_phase="complete",
+                        turn_state="game_over",
                         awaiting_confirmation=None,
                         prompt=None,
                         message="Board full: draw",
@@ -507,6 +559,8 @@ class GameLoopWorker:
 
                 self.controller._update_state(
                     game_status="waiting_human_move",
+                    game_phase="live",
+                    turn_state="human_turn",
                     awaiting_confirmation=None,
                     detected_yellow_column=None,
                     suggested_red_column=None,

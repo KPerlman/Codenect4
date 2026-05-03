@@ -389,6 +389,42 @@ PAGE_HTML = """
       font-weight: 700;
       text-align: right;
     }
+    .state-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .state-block {
+      border: 1px solid var(--line);
+      background: #fafbfc;
+      padding: 12px;
+      border-radius: 10px;
+    }
+    .state-block h3 {
+      margin: 0 0 8px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .state-kv {
+      display: grid;
+      gap: 6px;
+    }
+    .state-kv-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 0.9rem;
+    }
+    .state-kv-row span:first-child {
+      color: var(--muted);
+    }
+    .mono {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.84rem;
+    }
     .thinking::after {
       content: "";
       animation: dots 1.2s steps(4, end) infinite;
@@ -454,6 +490,44 @@ PAGE_HTML = """
             <div class="meta-row"><div class="meta-label">Tracker</div><div id="metaTracker" class="meta-value">calibrating</div></div>
             <div class="meta-row"><div class="meta-label">Camera</div><div id="metaCamera" class="meta-value">n/a</div></div>
             <div class="meta-row"><div class="meta-label">Suggested Red</div><div id="metaRed" class="meta-value">-</div></div>
+          </div>
+          <div class="state-grid">
+            <div class="state-block">
+              <h3>Game State</h3>
+              <div class="state-kv">
+                <div class="state-kv-row"><span>Running</span><strong id="stateGameRunning">no</strong></div>
+                <div class="state-kv-row"><span>Phase</span><strong id="stateGamePhase">idle</strong></div>
+                <div class="state-kv-row"><span>Turn</span><strong id="stateTurnState">idle</strong></div>
+                <div class="state-kv-row"><span>Winner</span><strong id="stateWinner">none</strong></div>
+              </div>
+            </div>
+            <div class="state-block">
+              <h3>Subsystems</h3>
+              <div class="state-kv">
+                <div class="state-kv-row"><span>Sorting enabled</span><strong id="stateSortingEnabled">no</strong></div>
+                <div class="state-kv-row"><span>Sorter process</span><strong id="stateSorterRunning">off</strong></div>
+                <div class="state-kv-row"><span>Tracker active</span><strong id="stateTrackerActive">no</strong></div>
+                <div class="state-kv-row"><span>Calibrated</span><strong id="stateTrackerCalibrated">no</strong></div>
+              </div>
+            </div>
+            <div class="state-block">
+              <h3>Pieces</h3>
+              <div class="state-kv">
+                <div class="state-kv-row"><span>Confirmed yellow</span><strong id="stateYellowCount">0</strong></div>
+                <div class="state-kv-row"><span>Confirmed red</span><strong id="stateRedCount">0</strong></div>
+                <div class="state-kv-row"><span>Pending yellow</span><strong id="statePendingYellow">0</strong></div>
+                <div class="state-kv-row"><span>Awaiting</span><strong id="stateAwaiting">none</strong></div>
+              </div>
+            </div>
+            <div class="state-block">
+              <h3>Runtime</h3>
+              <div class="state-kv">
+                <div class="state-kv-row"><span>Camera source</span><strong id="stateCameraSource" class="mono">n/a</strong></div>
+                <div class="state-kv-row"><span>Yellow column</span><strong id="stateYellowCol">-</strong></div>
+                <div class="state-kv-row"><span>Red column</span><strong id="stateRedCol">-</strong></div>
+                <div class="state-kv-row"><span>Updated</span><strong id="stateUpdated" class="mono">-</strong></div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -694,6 +768,37 @@ PAGE_HTML = """
         state.suggested_red_column !== null ? state.suggested_red_column : "-";
     }
 
+    function winnerLabel(value) {
+      if (value === 1) return "red";
+      if (value === 2) return "yellow";
+      return "none";
+    }
+
+    function renderStateBlocks(state) {
+      document.getElementById("stateGameRunning").textContent = state.game_running ? "yes" : "no";
+      document.getElementById("stateGamePhase").textContent = state.game_phase || "idle";
+      document.getElementById("stateTurnState").textContent = state.turn_state || "idle";
+      document.getElementById("stateWinner").textContent = winnerLabel(state.winner);
+
+      document.getElementById("stateSortingEnabled").textContent = state.sorting_enabled ? "yes" : "no";
+      document.getElementById("stateSorterRunning").textContent = state.sorter_running ? "running" : "off";
+      document.getElementById("stateTrackerActive").textContent = state.tracker_active ? "yes" : "no";
+      document.getElementById("stateTrackerCalibrated").textContent = state.tracker_calibrated ? "yes" : "no";
+
+      document.getElementById("stateYellowCount").textContent = state.confirmed_yellow_count ?? 0;
+      document.getElementById("stateRedCount").textContent = state.confirmed_red_count ?? 0;
+      document.getElementById("statePendingYellow").textContent = state.pending_yellow_count ?? 0;
+      document.getElementById("stateAwaiting").textContent = state.awaiting_confirmation || "none";
+
+      document.getElementById("stateCameraSource").textContent = state.camera_source || "n/a";
+      document.getElementById("stateYellowCol").textContent =
+        state.detected_yellow_column !== null ? state.detected_yellow_column : "-";
+      document.getElementById("stateRedCol").textContent =
+        state.suggested_red_column !== null ? state.suggested_red_column : "-";
+      document.getElementById("stateUpdated").textContent =
+        state.updated_at ? new Date(state.updated_at * 1000).toLocaleTimeString() : "-";
+    }
+
     function renderConfirmationCards(state) {
       const yellowCard = document.getElementById("yellowCard");
       const redCard = document.getElementById("redCard");
@@ -721,6 +826,7 @@ PAGE_HTML = """
       renderBanner(latestState);
       renderPills(latestState);
       renderMeta(latestState);
+      renderStateBlocks(latestState);
       renderConfirmationCards(latestState);
       renderBoard(latestState.current_board);
     }
