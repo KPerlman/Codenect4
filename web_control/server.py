@@ -254,21 +254,6 @@ PAGE_HTML = """
     .banner.ready {
       background: linear-gradient(180deg, var(--ok-soft) 0%, rgba(63,214,180,0.02) 100%);
     }
-    .chip-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      padding: 12px 16px 0;
-    }
-    .chip {
-      padding: 5px 9px;
-      border-radius: 999px;
-      border: 1px solid var(--line-strong);
-      background: #f7f8fa;
-      color: #374151;
-      font-size: 0.75rem;
-      font-weight: 700;
-    }
     .board-wrap {
       padding: 12px 16px 16px;
     }
@@ -511,7 +496,6 @@ PAGE_HTML = """
             <div id="bannerTitle" class="banner-title">Idle</div>
             <div id="bannerText" class="banner-copy">Start the game loop when you're ready.</div>
           </div>
-          <div id="pills" class="chip-row"></div>
           <div class="board-wrap">
             <div class="cols"><div>6</div><div>5</div><div>4</div><div>3</div><div>2</div><div>1</div><div>0</div></div>
             <div id="board" class="board"></div>
@@ -830,17 +814,6 @@ PAGE_HTML = """
       }
     }
 
-    function renderPills(state) {
-      const pills = [];
-      pills.push(`<span class="chip">status: ${state.game_status}</span>`);
-      pills.push(`<span class="chip">phase: ${state.game_phase || "idle"}</span>`);
-      pills.push(`<span class="chip">turn: ${state.turn_state || "idle"}</span>`);
-      pills.push(`<span class="chip">sorting: ${state.sorter_running ? "running" : "off"}</span>`);
-      pills.push(`<span class="chip">sorter cal: ${state.sorter_calibration_running ? "live" : "idle"}</span>`);
-      pills.push(`<span class="chip">tracker: ${state.tracker_calibrated ? "calibrated" : "calibrating"}</span>`);
-      document.getElementById("pills").innerHTML = pills.join("");
-    }
-
     function bannerConfig(state) {
       if (state.sorter_calibration_running) {
         return {
@@ -1041,7 +1014,6 @@ PAGE_HTML = """
     async function refresh() {
       latestState = await api("/api/state");
       renderBanner(latestState);
-      renderPills(latestState);
       renderMeta(latestState);
       renderStateBlocks(latestState);
       renderBeltPanel(latestState);
