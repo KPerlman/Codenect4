@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "broadcast-desk-2026-05-03a"
+WEB_CONTROL_VERSION = "mission-control-2026-05-03a"
 
 
 class StartGameRequest(BaseModel):
@@ -107,65 +107,67 @@ PAGE_HTML = """
   <title>Codenect4 Control</title>
   <style>
     :root {
-      --bg: #09111f;
-      --bg-top: #10213d;
-      --card: rgba(14, 24, 43, 0.9);
-      --card-soft: rgba(16, 29, 52, 0.72);
-      --ink: #f4f7fb;
-      --muted: #9fb0cb;
-      --line: rgba(255,255,255,0.08);
-      --line-strong: rgba(255,255,255,0.18);
-      --accent: #2b7cff;
-      --accent-soft: rgba(43,124,255,0.18);
-      --yellow: #f4c542;
-      --yellow-soft: rgba(244,197,66,0.16);
-      --red: #ef4b3f;
-      --red-soft: rgba(239,75,63,0.16);
-      --ok: #16b69a;
-      --ok-soft: rgba(22,182,154,0.16);
-      --board-blue-top: #2358e4;
-      --board-blue-bottom: #102a75;
-      --slot-empty: #dce6ff;
+      --bg: #07111c;
+      --bg-top: #0d1a2c;
+      --panel: rgba(10, 19, 33, 0.9);
+      --panel-soft: rgba(13, 25, 44, 0.66);
+      --line: rgba(145, 183, 255, 0.16);
+      --line-strong: rgba(145, 183, 255, 0.32);
+      --ink: #edf5ff;
+      --muted: #89a0c2;
+      --accent: #4da3ff;
+      --accent-soft: rgba(77, 163, 255, 0.16);
+      --ok: #3fd6b4;
+      --ok-soft: rgba(63, 214, 180, 0.14);
+      --warn: #ffbf47;
+      --warn-soft: rgba(255, 191, 71, 0.14);
+      --danger: #ff6a5f;
+      --danger-soft: rgba(255, 106, 95, 0.14);
+      --red: #ff5e52;
+      --yellow: #ffd15a;
+      --board-top: #2f74ff;
+      --board-bottom: #123983;
+      --slot-empty: #dbe7ff;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: Inter, "Avenir Next", "Segoe UI", sans-serif;
       color: var(--ink);
+      font-family: Inter, "Avenir Next", "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at top left, rgba(43,124,255,0.18) 0%, transparent 30%),
-        radial-gradient(circle at top right, rgba(239,75,63,0.10) 0%, transparent 24%),
-        linear-gradient(180deg, var(--bg-top) 0%, var(--bg) 52%, #050b15 100%);
+        radial-gradient(circle at top left, rgba(77,163,255,0.16) 0%, transparent 28%),
+        radial-gradient(circle at top right, rgba(63,214,180,0.10) 0%, transparent 22%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg) 58%, #040a12 100%);
     }
     .wrap {
-      max-width: 1220px;
+      max-width: 1240px;
       margin: 0 auto;
-      padding: 24px 20px 48px;
+      padding: 24px 22px 48px;
     }
     .masthead {
       display: grid;
-      gap: 10px;
+      gap: 8px;
       margin-bottom: 18px;
     }
-    .kicker {
-      color: #78a6ff;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      font-weight: 800;
+    .eyebrow {
+      color: #8dbdff;
       font-size: 0.76rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
     }
     h1 {
       margin: 0;
-      font-size: 2.8rem;
-      line-height: 0.96;
+      font-size: 2.7rem;
+      line-height: 0.95;
       letter-spacing: -0.06em;
-      font-weight: 820;
+      font-weight: 810;
     }
     .sub {
       margin: 0;
+      max-width: 44rem;
       color: var(--muted);
-      max-width: 42rem;
-      line-height: 1.5;
+      line-height: 1.55;
     }
     .layout {
       display: grid;
@@ -174,7 +176,7 @@ PAGE_HTML = """
     }
     @media (min-width: 980px) {
       .layout {
-        grid-template-columns: minmax(0, 1.45fr) minmax(340px, 0.72fr);
+        grid-template-columns: minmax(0, 1.45fr) minmax(330px, 0.74fr);
       }
     }
     .stack {
@@ -182,105 +184,71 @@ PAGE_HTML = """
       gap: 14px;
     }
     .panel {
-      background: var(--card);
+      background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 16px;
-      box-shadow: 0 18px 40px rgba(0,0,0,0.22);
-      backdrop-filter: blur(12px);
+      border-radius: 10px;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 18px 38px rgba(0,0,0,0.22);
     }
-    .hero-panel {
-      padding: 0;
-      overflow: hidden;
-    }
-    .broadcast-banner {
-      display: grid;
-      gap: 0;
-    }
-    .banner-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      padding: 12px 16px;
-      background: rgba(255,255,255,0.05);
+    .banner {
+      padding: 16px 18px 18px;
       border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 100%);
     }
     .banner-label {
-      font-size: 0.78rem;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
+      margin-bottom: 10px;
+      color: #8dbdff;
+      font-size: 0.74rem;
       font-weight: 800;
-      color: #a7c5ff;
-    }
-    .live-pill {
-      padding: 6px 10px;
-      border-radius: 999px;
-      background: var(--red);
-      color: white;
-      font-size: 0.75rem;
-      font-weight: 800;
-      letter-spacing: 0.08em;
       text-transform: uppercase;
-    }
-    .banner-main {
-      padding: 18px 18px 16px;
-      display: grid;
-      gap: 8px;
+      letter-spacing: 0.18em;
     }
     .banner-title {
-      font-size: 2rem;
-      line-height: 0.96;
+      font-size: 1.95rem;
+      line-height: 0.98;
       letter-spacing: -0.05em;
-      font-weight: 810;
+      font-weight: 800;
     }
     .banner-copy {
+      margin-top: 10px;
       color: var(--muted);
       line-height: 1.5;
-      max-width: 48rem;
+      max-width: 50rem;
     }
-    .banner-main.thinking {
-      background: linear-gradient(180deg, rgba(43,124,255,0.18) 0%, rgba(43,124,255,0.06) 100%);
+    .banner.thinking {
+      background: linear-gradient(180deg, var(--accent-soft) 0%, rgba(77,163,255,0.02) 100%);
     }
-    .banner-main.waiting {
-      background: linear-gradient(180deg, rgba(244,197,66,0.18) 0%, rgba(244,197,66,0.06) 100%);
+    .banner.waiting {
+      background: linear-gradient(180deg, var(--warn-soft) 0%, rgba(255,191,71,0.02) 100%);
     }
-    .banner-main.ready {
-      background: linear-gradient(180deg, rgba(22,182,154,0.16) 0%, rgba(22,182,154,0.05) 100%);
+    .banner.ready {
+      background: linear-gradient(180deg, var(--ok-soft) 0%, rgba(63,214,180,0.02) 100%);
     }
     .chip-row {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
+      padding: 14px 18px 0;
     }
     .chip {
       padding: 6px 10px;
       border-radius: 999px;
       border: 1px solid var(--line-strong);
-      background: rgba(255,255,255,0.05);
-      color: #d7e4ff;
-      font-size: 0.76rem;
+      background: rgba(255,255,255,0.03);
+      color: #d9e8ff;
+      font-size: 0.75rem;
       font-weight: 700;
     }
-    .section-title {
-      margin: 0 0 12px;
-      font-size: 0.82rem;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      color: #8fa7d4;
-      font-weight: 800;
-    }
-    .board-card {
-      display: grid;
-      gap: 12px;
-      padding: 18px;
+    .board-wrap {
+      padding: 16px 18px 18px;
     }
     .cols {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
       gap: 8px;
+      margin-bottom: 8px;
       text-align: center;
-      color: #8da5d9;
+      color: #8fa6cb;
       font-size: 0.74rem;
       font-weight: 800;
       letter-spacing: 0.12em;
@@ -290,30 +258,30 @@ PAGE_HTML = """
       grid-template-columns: repeat(7, 1fr);
       gap: 12px;
       padding: 22px;
+      border-radius: 12px;
       background:
-        radial-gradient(circle at top, rgba(255,255,255,0.12) 0%, transparent 30%),
-        linear-gradient(180deg, var(--board-blue-top) 0%, var(--board-blue-bottom) 100%);
-      border-radius: 14px;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 22px 34px rgba(0,0,0,0.28);
+        radial-gradient(circle at top, rgba(255,255,255,0.12) 0%, transparent 28%),
+        linear-gradient(180deg, var(--board-top) 0%, var(--board-bottom) 100%);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 18px 32px rgba(0,0,0,0.26);
     }
     .slot {
       aspect-ratio: 1;
       border-radius: 999px;
       background:
-        radial-gradient(circle at 35% 30%, #ffffff 0%, #f3f6ff 24%, var(--slot-empty) 60%, #ccd8f6 100%);
+        radial-gradient(circle at 35% 30%, #ffffff 0%, #f2f6ff 24%, var(--slot-empty) 60%, #c9d7f4 100%);
       border: 2px solid rgba(255,255,255,0.14);
       box-shadow: inset 0 6px 12px rgba(0,0,0,0.18);
     }
     .slot.red {
-      background: radial-gradient(circle at 35% 30%, #ff9f92 0%, #f65d4b 28%, var(--red) 68%, #971d16 100%);
+      background: radial-gradient(circle at 35% 30%, #ff9c91 0%, #f65f4d 28%, var(--red) 68%, #9d1f18 100%);
     }
     .slot.yellow {
-      background: radial-gradient(circle at 35% 30%, #fff4aa 0%, #f8df7a 34%, var(--yellow) 72%, #c59015 100%);
+      background: radial-gradient(circle at 35% 30%, #fff4ab 0%, #f8df7c 34%, var(--yellow) 72%, #c89617 100%);
     }
     .slot.pending-yellow {
-      background: radial-gradient(circle at 35% 30%, #fff9ca 0%, #fff09f 36%, #f7d96e 70%, #d7a92b 100%);
+      background: radial-gradient(circle at 35% 30%, #fff8ca 0%, #ffef9f 36%, #f7da71 70%, #d9ab2c 100%);
       opacity: 0.84;
-      box-shadow: inset 0 4px 10px rgba(120,90,0,0.12), 0 0 0 3px rgba(244,197,66,0.28);
+      box-shadow: inset 0 4px 10px rgba(120,90,0,0.12), 0 0 0 3px rgba(255,209,90,0.28);
     }
     .slot.clickable {
       cursor: pointer;
@@ -326,6 +294,7 @@ PAGE_HTML = """
       display: flex;
       gap: 12px;
       flex-wrap: wrap;
+      margin-top: 14px;
       color: var(--muted);
       font-size: 0.82rem;
     }
@@ -341,7 +310,18 @@ PAGE_HTML = """
     }
     .legend-dot.red { background: var(--red); }
     .legend-dot.yellow { background: var(--yellow); }
-    .legend-dot.empty { background: var(--slot-empty); border: 1px solid #a8badf; }
+    .legend-dot.empty { background: var(--slot-empty); border: 1px solid #a9bcdf; }
+    .section {
+      padding: 16px 18px 18px;
+    }
+    .section-title {
+      margin: 0 0 12px;
+      color: #8dbdff;
+      font-size: 0.74rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+    }
     .state-grid {
       display: grid;
       gap: 10px;
@@ -350,14 +330,15 @@ PAGE_HTML = """
       padding: 12px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: var(--card-soft);
+      background: var(--panel-soft);
     }
     .state-box h3 {
       margin: 0 0 8px;
-      font-size: 0.74rem;
-      text-transform: uppercase;
+      color: #8fa6cb;
+      font-size: 0.7rem;
       letter-spacing: 0.14em;
-      color: #8fa7d4;
+      text-transform: uppercase;
+      font-weight: 800;
     }
     .state-kv {
       display: grid;
@@ -396,23 +377,22 @@ PAGE_HTML = """
       opacity: 0.96;
       transform: translateY(-1px);
     }
-    button.warning { background: var(--yellow); color: #271800; }
-    button.danger { background: var(--red); }
+    button.warning { background: var(--warn); color: #281800; }
+    button.danger { background: var(--danger); }
     button.ok { background: var(--ok); }
-    button.secondary { background: #42526f; }
-    .confirm-card {
-      border-radius: 8px;
-      border: 1px solid var(--line-strong);
-      background: rgba(255,255,255,0.04);
-      padding: 16px;
+    button.secondary { background: #41536f; }
+    .confirm-panel {
+      padding: 16px 18px 18px;
+      border-top: 1px solid var(--line);
     }
-    .confirm-card.hidden {
+    .confirm-panel.hidden {
       display: none;
     }
     .confirm-title {
       margin: 0 0 8px;
       font-size: 1rem;
       letter-spacing: -0.02em;
+      font-weight: 760;
     }
     .confirm-copy {
       margin: 0 0 12px;
@@ -442,42 +422,35 @@ PAGE_HTML = """
 <body>
   <div class="wrap">
     <div class="masthead">
-      <div class="kicker">Live Match Console</div>
-      <h1>Connect4 Broadcast Desk</h1>
-      <p class="sub">A live control surface for state, move confirmation, sorter control, and real-time game flow.</p>
+      <div class="eyebrow">Mission Control</div>
+      <h1>Connect4 Operations Console</h1>
+      <p class="sub">A live technical surface for board state, sorter status, move confirmation, and game-loop control.</p>
     </div>
 
     <div class="layout">
       <div class="stack">
-        <div class="panel hero-panel">
-          <div class="broadcast-banner">
-            <div class="banner-top">
-              <div class="banner-label">Game Feed</div>
-              <div class="live-pill">Live</div>
-            </div>
-            <div id="turnBanner" class="banner-main">
-              <div id="bannerTitle" class="banner-title">Idle</div>
-              <div id="bannerText" class="banner-copy">Start the game loop when you're ready.</div>
-            </div>
+        <div class="panel">
+          <div id="turnBanner" class="banner">
+            <div class="banner-label">Primary State</div>
+            <div id="bannerTitle" class="banner-title">Idle</div>
+            <div id="bannerText" class="banner-copy">Start the game loop when you're ready.</div>
           </div>
-        </div>
-
-        <div class="panel board-card">
-          <div class="section-title">Board View</div>
-          <div class="cols"><div>6</div><div>5</div><div>4</div><div>3</div><div>2</div><div>1</div><div>0</div></div>
-          <div id="board" class="board"></div>
-          <div class="legend">
-            <div class="legend-chip"><span class="legend-dot yellow"></span><span>Player / Yellow</span></div>
-            <div class="legend-chip"><span class="legend-dot red"></span><span>Computer / Red</span></div>
-            <div class="legend-chip"><span class="legend-dot empty"></span><span>Empty</span></div>
+          <div id="pills" class="chip-row"></div>
+          <div class="board-wrap">
+            <div class="cols"><div>6</div><div>5</div><div>4</div><div>3</div><div>2</div><div>1</div><div>0</div></div>
+            <div id="board" class="board"></div>
+            <div class="legend">
+              <div class="legend-chip"><span class="legend-dot yellow"></span><span>Player / Yellow</span></div>
+              <div class="legend-chip"><span class="legend-dot red"></span><span>Computer / Red</span></div>
+              <div class="legend-chip"><span class="legend-dot empty"></span><span>Empty</span></div>
+            </div>
           </div>
         </div>
       </div>
 
       <div class="stack">
-        <div class="panel">
-          <div class="section-title">Live Status</div>
-          <div id="pills" class="chip-row"></div>
+        <div class="panel section">
+          <div class="section-title">System State</div>
           <div class="state-grid">
             <div class="state-box">
               <h3>Game State</h3>
@@ -490,7 +463,7 @@ PAGE_HTML = """
               </div>
             </div>
             <div class="state-box">
-              <h3>Detection</h3>
+              <h3>Vision</h3>
               <div class="state-kv">
                 <div class="state-row"><span>Tracker</span><strong id="metaTracker">calibrating</strong></div>
                 <div class="state-row"><span>Tracker active</span><strong id="stateTrackerActive">no</strong></div>
@@ -514,31 +487,31 @@ PAGE_HTML = """
               <div class="state-kv">
                 <div class="state-row"><span>Sorting enabled</span><strong id="stateSortingEnabled">no</strong></div>
                 <div class="state-row"><span>Sorter process</span><strong id="stateSorterRunning">off</strong></div>
-                <div class="state-row"><span>Camera source</span><strong id="stateCameraSource">n/a</strong></div>
                 <div class="state-row"><span>Suggested red</span><strong id="metaRed">-</strong></div>
                 <div class="state-row"><span>Tracker calibrated</span><strong id="stateTrackerCalibrated">no</strong></div>
+                <div class="state-row"><span>Camera source</span><strong id="stateCameraSource">n/a</strong></div>
               </div>
             </div>
           </div>
         </div>
 
-        <div id="yellowCard" class="panel confirm-card hidden">
+        <div id="yellowCard" class="panel confirm-panel hidden">
           <div class="section-title">Yellow Confirmation</div>
-          <div class="confirm-title">Check player move</div>
+          <div class="confirm-title">Validate player move</div>
           <div id="yellowCopy" class="confirm-copy">Tap the highlighted yellow slot to confirm it, or tap another slot in the correct column to override it.</div>
         </div>
 
-        <div id="redCard" class="panel confirm-card hidden">
+        <div id="redCard" class="panel confirm-panel hidden">
           <div class="section-title">Red Placement</div>
-          <div class="confirm-title">Place the computer piece</div>
+          <div class="confirm-title">Confirm robot output</div>
           <div id="redCopy" class="confirm-copy">The computer has chosen a red column. Place the piece, then confirm it here.</div>
           <div class="controls">
             <button class="warning" onclick="confirmRed()">Red Piece Placed</button>
           </div>
         </div>
 
-        <div class="panel">
-          <div class="section-title">Control Deck</div>
+        <div class="panel section">
+          <div class="section-title">Game Controls</div>
           <div class="controls">
             <button onclick="startGame()">Start Game</button>
             <button class="warning" onclick="resetGame()">Reset Game</button>
@@ -546,8 +519,8 @@ PAGE_HTML = """
           </div>
         </div>
 
-        <div class="panel">
-          <div class="section-title">Sorting Desk</div>
+        <div class="panel section">
+          <div class="section-title">Sorting Controls</div>
           <div class="controls">
             <button class="ok" onclick="enableSorting()">Enable Sorting</button>
             <button class="secondary" onclick="disableSorting()">Disable Sorting</button>
@@ -681,55 +654,55 @@ PAGE_HTML = """
     function bannerConfig(state) {
       if (state.awaiting_confirmation === "yellow") {
         return {
-          className: "banner-main waiting",
+          className: "banner waiting",
           title: `Yellow move detected in column ${state.detected_yellow_column ?? "-"}`,
           text: state.prompt || "Confirm the detected yellow move or correct it.",
         };
       }
       if (state.awaiting_confirmation === "red") {
         return {
-          className: "banner-main waiting",
+          className: "banner waiting",
           title: `Place red in column ${state.suggested_red_column ?? "-"}`,
           text: state.prompt || "Drop the red piece on the real board and confirm it here.",
         };
       }
       if (state.game_status === "thinking") {
         return {
-          className: "banner-main thinking",
+          className: "banner thinking",
           title: "Computer is thinking",
           text: state.message || "Choosing where red should go next.",
         };
       }
       if (state.game_status === "waiting_human_move") {
         return {
-          className: "banner-main ready",
+          className: "banner ready",
           title: "Player turn",
           text: state.prompt || "Drop a yellow piece and hold the board steady.",
         };
       }
       if (state.game_status === "calibrating") {
         return {
-          className: "banner-main",
+          className: "banner",
           title: "Calibrating board",
           text: state.message || "Keep the board visible and empty for a moment.",
         };
       }
       if (state.game_status === "finished") {
         return {
-          className: "banner-main ready",
+          className: "banner ready",
           title: state.winner === 1 ? "Red wins" : state.winner === 2 ? "Yellow wins" : "Game finished",
           text: state.message || "Reset when you're ready for the next round.",
         };
       }
       if (state.game_status === "error") {
         return {
-          className: "banner-main waiting",
+          className: "banner waiting",
           title: "Something needs attention",
           text: state.error || state.message || "Check the service logs and current hardware state.",
         };
       }
       return {
-        className: "banner-main",
+        className: "banner",
         title: "Idle",
         text: state.message || "Start the game loop when you're ready.",
       };
@@ -798,7 +771,7 @@ PAGE_HTML = """
       redCard.classList.toggle("hidden", state.awaiting_confirmation !== "red");
 
       if (state.awaiting_confirmation === "yellow") {
-        yellowCopy.textContent = state.prompt || "Tap the highlighted yellow slot to confirm it, or tap a different slot to override it.";
+        yellowCopy.textContent = state.prompt || "Tap the highlighted yellow slot to confirm it, or tap another slot to override it.";
       }
       if (state.awaiting_confirmation === "red") {
         redCopy.textContent = state.prompt || "Place the red piece and confirm it here.";
