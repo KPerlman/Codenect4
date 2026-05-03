@@ -414,6 +414,10 @@ PAGE_HTML = """
       line-height: 1.45;
       font-size: 0.92rem;
     }
+    .thinking {
+      display: inline-block;
+      white-space: nowrap;
+    }
     .thinking::after {
       content: "";
       animation: dots 1.2s steps(4, end) infinite;
@@ -648,13 +652,23 @@ PAGE_HTML = """
     }
 
     async function handleBoardClick(visibleColumn, isPendingCell) {
-      if (!latestState || latestState.awaiting_confirmation !== "yellow") return;
-      if (isPendingCell) {
-        await confirmYellow(true);
+      if (!latestState) return;
+      if (latestState.awaiting_confirmation === "yellow") {
+        if (isPendingCell) {
+          await confirmYellow(true);
+          return;
+        }
+        await api("/api/game/yellow-confirm", "POST", { accept: false, column: visibleColumn });
+        await refresh();
         return;
       }
-      await api("/api/game/yellow-confirm", "POST", { accept: false, column: visibleColumn });
-      await refresh();
+      if (
+        latestState.awaiting_confirmation === "red" &&
+        latestState.suggested_red_column !== null &&
+        visibleColumn === latestState.suggested_red_column
+      ) {
+        await confirmRed();
+      }
     }
 
     function renderBoard(board) {
@@ -685,6 +699,15 @@ PAGE_HTML = """
               ? `Confirm detected yellow in column ${originalCol}`
               : `Override to column ${originalCol}`;
             slot.addEventListener("click", () => handleBoardClick(originalCol, isPending));
+          } else if (
+            latestState &&
+            latestState.awaiting_confirmation === "red" &&
+            latestState.suggested_red_column !== null &&
+            originalCol === latestState.suggested_red_column
+          ) {
+            slot.classList.add("clickable");
+            slot.title = `Confirm red placement in column ${originalCol}`;
+            slot.addEventListener("click", () => handleBoardClick(originalCol, false));
           }
           root.appendChild(slot);
         }
