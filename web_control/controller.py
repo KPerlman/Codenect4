@@ -72,6 +72,13 @@ class SharedState:
         default_factory=lambda: {"red": 0, "yellow": 0, "none": 0}
     )
     sorter_calibration_values: dict[str, float] | None = None
+    belt_running: bool = False
+    belt_status: str = "idle"
+    belt_mode: str = "continuous"
+    belt_speed: int = 600
+    belt_accel: int = 400
+    belt_steps: int | None = None
+    belt_error: str | None = None
     updated_at: float = field(default_factory=time.time)
 
     def to_dict(self):
@@ -102,6 +109,13 @@ class SharedState:
             "sorter_calibration_sample": self.sorter_calibration_sample,
             "sorter_calibration_counts": self.sorter_calibration_counts,
             "sorter_calibration_values": self.sorter_calibration_values,
+            "belt_running": self.belt_running,
+            "belt_status": self.belt_status,
+            "belt_mode": self.belt_mode,
+            "belt_speed": self.belt_speed,
+            "belt_accel": self.belt_accel,
+            "belt_steps": self.belt_steps,
+            "belt_error": self.belt_error,
             "updated_at": self.updated_at,
         }
 
@@ -118,6 +132,53 @@ class RobotWebController:
         self._sorter_calibration_thread = None
         self._sorter_calibration_stop_event = None
         self._sorter_calibration_commands = None
+        self._belt_thread = None
+        self._belt_stop_event = None
+
+    def start_belt(self, speed=600, accel=400, steps=None):
+        with self._lock:
+            if self._belt_thread and self._belt_thread.is_alive():
+                return self._state.to_dict()
+            self._belt_stop_event = threading.Event()
+            worker = BeltWorker(
+                controller=self,
+                stop_event=self._belt_stop_event,
+                speed=speed,
+                accel=accel,
+                steps=steps,
+            )
+            self._belt_thread = threading.Thread(
+                target=worker.run,
+                daemon=True,
+                name="belt-worker",
+            )
+            self._belt_thread.start()
+            self._update_state(
+                belt_running=True,
+                belt_status="starting",
+                belt_mode="steps" if steps is not None else "continuous",
+                belt_speed=speed,
+                belt_accel=accel,
+                belt_steps=steps,
+                belt_error=None,
+                message="Starting belt",
+            )
+            return self._state.to_dict()
+
+    def stop_belt(self):
+        thread = None
+        with self._lock:
+            if self._belt_stop_event is not None:
+                self._belt_stop_event.set()
+            thread = self._belt_thread
+        if thread and thread.is_alive():
+            thread.join(timeout=3.0)
+        self._update_state(
+            belt_running=False,
+            belt_status="stopped",
+            message="Belt stopped",
+        )
+        return self.get_state()
 
     def get_state(self):
         with self._lock:
@@ -870,3 +931,112 @@ class SorterCalibrationWorker:
                 except Exception:
                     pass
                 pca.deinit()
+
+
+class BeltWorker:
+    PORT = "/dev/serial0"
+
+    def __init__(self, controller, stop_event, speed, accel, steps):
+        self.controller = controller
+        self.stop_event = stop_event
+        self.speed = speed
+        self.accel = accel
+        self.steps = steps
+
+    def _wait_for(self, arduino, targets, timeout_s=5.0):
+        deadline = time.time() + timeout_s
+        while True:
+            if self.stop_event.is_set():
+                raise RuntimeError("Belt stop requested")
+            if time.time() > deadline:
+                raise TimeoutError(f"Timeout waiting for {targets}")
+            line = arduino.readline().decode(errors="ignore").strip()
+            line = "".join(ch for ch in line if ch.isprintable())
+            if line in targets:
+                return line
+
+    def _send_and_wait(self, arduino, command, targets, timeout_s=5.0, attempts=3, pre_delay_s=0.1):
+        last_error = None
+        for _ in range(attempts):
+            time.sleep(pre_delay_s)
+            arduino.write(f"{command}\n".encode())
+            try:
+                return self._wait_for(arduino, targets, timeout_s=timeout_s)
+            except TimeoutError as exc:
+                last_error = exc
+                arduino.reset_input_buffer()
+                time.sleep(0.2)
+        raise last_error
+
+    def _sync_controller(self, arduino, attempts=6, timeout_s=1.5):
+        for _ in range(attempts):
+            arduino.write(b"PING\n")
+            try:
+                self._wait_for(arduino, {"PONG"}, timeout_s=timeout_s)
+                time.sleep(0.3)
+                arduino.reset_input_buffer()
+                return
+            except TimeoutError:
+                arduino.reset_input_buffer()
+                time.sleep(0.3)
+        raise TimeoutError("Controller did not respond to PING")
+
+    def run(self):
+        arduino = None
+        try:
+            import serial
+
+            arduino = serial.Serial(self.PORT, 9600, timeout=1)
+            time.sleep(2)
+            arduino.reset_input_buffer()
+            arduino.reset_output_buffer()
+
+            self._sync_controller(arduino)
+            self._send_and_wait(arduino, f"SPEED {self.speed}", {"OK", "ERR"})
+            self._send_and_wait(arduino, f"ACCEL {self.accel}", {"OK", "ERR"})
+
+            if self.steps is not None:
+                self.controller._update_state(
+                    belt_status="running",
+                    belt_mode="steps",
+                    message=f"Running belt for {self.steps} steps",
+                )
+                self._send_and_wait(arduino, f"STEPS {self.steps}", {"DONE"}, timeout_s=10.0)
+                self.controller._update_state(
+                    belt_running=False,
+                    belt_status="completed",
+                    message=f"Belt step run completed ({self.steps} steps)",
+                )
+            else:
+                self._send_and_wait(arduino, f"RUN {self.speed}", {"OK", "ERR"})
+                self.controller._update_state(
+                    belt_running=True,
+                    belt_status="running",
+                    belt_mode="continuous",
+                    message=f"Belt running continuously at {self.speed} steps/sec",
+                )
+                while not self.stop_event.is_set():
+                    time.sleep(0.1)
+                self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0)
+                self.controller._update_state(
+                    belt_running=False,
+                    belt_status="stopped",
+                    message="Belt stopped",
+                )
+        except Exception as exc:
+            self.controller._update_state(
+                belt_running=False,
+                belt_status="error",
+                belt_error=str(exc),
+                message="Belt control failed",
+                error=str(exc),
+            )
+        finally:
+            with self.controller._lock:
+                if self.controller._belt_thread is threading.current_thread():
+                    self.controller._belt_thread = None
+            if arduino is not None:
+                try:
+                    arduino.close()
+                except Exception:
+                    pass

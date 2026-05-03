@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03e"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03f"
 
 
 class StartGameRequest(BaseModel):
@@ -30,6 +30,12 @@ class SorterCalibrationLabelRequest(BaseModel):
 
 class ManualHumanMoveRequest(BaseModel):
     column: int
+
+
+class BeltStartRequest(BaseModel):
+    speed: int = 600
+    accel: int = 400
+    steps: int | None = None
 
 
 @app.get("/api/state")
@@ -113,6 +119,16 @@ def api_sorter_calibration_label(request: SorterCalibrationLabelRequest):
 @app.post("/api/servos/zero")
 def api_zero_servos():
     return controller.zero_servos()
+
+
+@app.post("/api/belt/start")
+def api_start_belt(request: BeltStartRequest):
+    return controller.start_belt(speed=request.speed, accel=request.accel, steps=request.steps)
+
+
+@app.post("/api/belt/stop")
+def api_stop_belt():
+    return controller.stop_belt()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -270,14 +286,14 @@ PAGE_HTML = """
     .board {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
-      gap: 8px;
-      padding: 14px;
-      max-width: 460px;
+      gap: 7px;
+      padding: 12px;
+      max-width: 420px;
       width: 100%;
       margin: 0 auto;
       border-radius: 10px;
       background: #2156c7;
-      box-shadow: 0 10px 18px rgba(15, 23, 42, 0.12);
+      box-shadow: 0 8px 16px rgba(15, 23, 42, 0.10);
     }
     .slot {
       aspect-ratio: 1;
@@ -379,6 +395,32 @@ PAGE_HTML = """
       gap: 8px;
       grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
     }
+    .field-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-bottom: 12px;
+    }
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+    .field label {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .field input {
+      width: 100%;
+      padding: 10px 11px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: white;
+      color: var(--ink);
+      font: inherit;
+    }
     button {
       appearance: none;
       border: 1px solid transparent;
@@ -426,17 +468,17 @@ PAGE_HTML = """
     .thinking-line {
       display: inline-flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       white-space: nowrap;
     }
     .loading-dots {
       display: inline-flex;
-      gap: 5px;
-      transform: translateY(2px);
+      gap: 4px;
+      transform: translateY(1px);
     }
     .loading-dots span {
-      width: 7px;
-      height: 7px;
+      width: 6px;
+      height: 6px;
       border-radius: 999px;
       background: rgba(17, 24, 39, 0.48);
       animation: pulseDot 1s infinite ease-in-out;
@@ -583,6 +625,28 @@ PAGE_HTML = """
             <button class="secondary" onclick="zeroServos()">Zero All Servos</button>
           </div>
         </div>
+
+        <div class="panel section">
+          <div class="section-title">Belt Control</div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="beltSpeed">Speed</label>
+              <input id="beltSpeed" type="number" inputmode="numeric" value="600">
+            </div>
+            <div class="field">
+              <label for="beltAccel">Accel</label>
+              <input id="beltAccel" type="number" inputmode="numeric" value="400">
+            </div>
+            <div class="field">
+              <label for="beltSteps">Steps</label>
+              <input id="beltSteps" type="number" inputmode="numeric" placeholder="empty = continuous">
+            </div>
+          </div>
+          <div class="confirm-copy" id="beltStatusText">Belt idle.</div>
+          <div class="controls">
+            <button id="beltActionButton" class="ok" onclick="toggleBelt()">Start Belt</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -641,6 +705,20 @@ PAGE_HTML = """
 
     async function zeroServos() {
       await api("/api/servos/zero", "POST");
+      await refresh();
+    }
+
+    async function toggleBelt() {
+      if (latestState && latestState.belt_running) {
+        await api("/api/belt/stop", "POST");
+        await refresh();
+        return;
+      }
+      const speed = parseInt(document.getElementById("beltSpeed").value || "600", 10);
+      const accel = parseInt(document.getElementById("beltAccel").value || "400", 10);
+      const stepsValue = document.getElementById("beltSteps").value.trim();
+      const steps = stepsValue === "" ? null : parseInt(stepsValue, 10);
+      await api("/api/belt/start", "POST", { speed, accel, steps });
       await refresh();
     }
 
@@ -789,7 +867,7 @@ PAGE_HTML = """
         return {
           className: "banner thinking",
           title: "Computer is thinking",
-          text: "Selecting a red move.",
+          text: "",
         };
       }
       if (state.game_status === "waiting_human_move") {
@@ -839,6 +917,7 @@ PAGE_HTML = """
         title.textContent = config.title;
       }
       text.textContent = config.text;
+      text.style.display = config.text ? "block" : "none";
     }
 
     function winnerLabel(value) {
@@ -880,6 +959,30 @@ PAGE_HTML = """
         state.suggested_red_column !== null ? state.suggested_red_column : "-";
       document.getElementById("stateUpdated").textContent =
         state.updated_at ? new Date(state.updated_at * 1000).toLocaleTimeString() : "-";
+    }
+
+    function renderBeltPanel(state) {
+      const status = document.getElementById("beltStatusText");
+      const button = document.getElementById("beltActionButton");
+      if (!status || !button) return;
+
+      if (state.belt_running) {
+        const modeText = state.belt_mode === "steps"
+          ? `Running ${state.belt_steps ?? "-"} steps at ${state.belt_speed} / accel ${state.belt_accel}.`
+          : `Running continuously at ${state.belt_speed} / accel ${state.belt_accel}.`;
+        status.textContent = modeText;
+        button.textContent = "Stop Belt";
+        button.className = "danger";
+      } else {
+        const detail = state.belt_error
+          ? ` Error: ${state.belt_error}`
+          : state.belt_status === "completed"
+            ? " Last step run completed."
+            : "";
+        status.textContent = `Belt ${state.belt_status || "idle"}.${detail}`;
+        button.textContent = "Start Belt";
+        button.className = "ok";
+      }
     }
 
     function renderSorterCalibration(state) {
@@ -941,6 +1044,7 @@ PAGE_HTML = """
       renderPills(latestState);
       renderMeta(latestState);
       renderStateBlocks(latestState);
+      renderBeltPanel(latestState);
       renderSorterCalibration(latestState);
       renderConfirmationCards(latestState);
       renderBoard(latestState.current_board);
