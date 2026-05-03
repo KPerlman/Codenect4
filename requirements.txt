@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pydantic
+numpy
+opencv-python
+pyserial
+adafruit-blinka
+adafruit-circuitpython-pca9685
+adafruit-circuitpython-tcs34725
+adafruit-extended-bus
+Adafruit-CircuitPython-BitbangIO
+smbus2
