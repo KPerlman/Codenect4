@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03f"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03g"
 
 
 class StartGameRequest(BaseModel):
@@ -185,16 +185,16 @@ PAGE_HTML = """
     .wrap {
       max-width: 1120px;
       margin: 0 auto;
-      padding: 24px 18px 36px;
+      padding: 18px 16px 28px;
     }
     .masthead {
       display: grid;
       gap: 4px;
-      margin-bottom: 16px;
+      margin-bottom: 12px;
     }
     h1 {
       margin: 0;
-      font-size: 2.2rem;
+      font-size: 2rem;
       line-height: 1;
       letter-spacing: -0.06em;
       font-weight: 780;
@@ -218,31 +218,32 @@ PAGE_HTML = """
       border: 1px solid var(--line);
       border-radius: 8px;
       backdrop-filter: blur(10px);
-      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
     }
     .banner {
-      padding: 14px 16px 16px;
+      padding: 12px 14px 14px;
       border-bottom: 1px solid var(--line);
       background: linear-gradient(180deg, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.3) 100%);
     }
     .banner-label {
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       color: #637083;
-      font-size: 0.74rem;
+      font-size: 0.7rem;
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 0.18em;
     }
     .banner-title {
-      font-size: 1.55rem;
+      font-size: 1.36rem;
       line-height: 0.98;
       letter-spacing: -0.05em;
       font-weight: 800;
     }
     .banner-copy {
-      margin-top: 10px;
+      margin-top: 8px;
       color: var(--muted);
-      line-height: 1.5;
+      line-height: 1.42;
+      font-size: 0.9rem;
       max-width: 50rem;
     }
     .banner.thinking {
@@ -255,7 +256,7 @@ PAGE_HTML = """
       background: linear-gradient(180deg, var(--ok-soft) 0%, rgba(63,214,180,0.02) 100%);
     }
     .board-wrap {
-      padding: 12px 16px 16px;
+      padding: 10px 14px 14px;
     }
     .cols {
       display: grid;
@@ -271,14 +272,14 @@ PAGE_HTML = """
     .board {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
-      gap: 7px;
-      padding: 12px;
-      max-width: 420px;
+      gap: 6px;
+      padding: 10px;
+      max-width: 380px;
       width: 100%;
       margin: 0 auto;
-      border-radius: 10px;
+      border-radius: 9px;
       background: #2156c7;
-      box-shadow: 0 8px 16px rgba(15, 23, 42, 0.10);
+      box-shadow: 0 7px 14px rgba(15, 23, 42, 0.09);
     }
     .slot {
       aspect-ratio: 1;
@@ -312,9 +313,9 @@ PAGE_HTML = """
       display: flex;
       gap: 12px;
       flex-wrap: wrap;
-      margin-top: 12px;
+      margin-top: 10px;
       color: var(--muted);
-      font-size: 0.78rem;
+      font-size: 0.74rem;
       justify-content: center;
     }
     .legend-chip {
@@ -331,7 +332,7 @@ PAGE_HTML = """
     .legend-dot.yellow { background: var(--yellow); }
     .legend-dot.empty { background: var(--slot-empty); border: 1px solid #a9bcdf; }
     .section {
-      padding: 14px 16px 16px;
+      padding: 12px 14px 14px;
     }
     .section-title {
       margin: 0 0 12px;
