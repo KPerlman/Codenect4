@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "mission-control-2026-05-03a"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03a"
 
 
 class StartGameRequest(BaseModel):
@@ -104,25 +104,25 @@ PAGE_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Codenect4 Control</title>
+  <title>Connect4 Dashboard</title>
   <style>
     :root {
-      --bg: #07111c;
-      --bg-top: #0d1a2c;
-      --panel: rgba(10, 19, 33, 0.9);
-      --panel-soft: rgba(13, 25, 44, 0.66);
-      --line: rgba(145, 183, 255, 0.16);
-      --line-strong: rgba(145, 183, 255, 0.32);
-      --ink: #edf5ff;
-      --muted: #89a0c2;
-      --accent: #4da3ff;
-      --accent-soft: rgba(77, 163, 255, 0.16);
-      --ok: #3fd6b4;
-      --ok-soft: rgba(63, 214, 180, 0.14);
-      --warn: #ffbf47;
-      --warn-soft: rgba(255, 191, 71, 0.14);
-      --danger: #ff6a5f;
-      --danger-soft: rgba(255, 106, 95, 0.14);
+      --bg: #eef1f4;
+      --bg-top: #f7f8fa;
+      --panel: rgba(255, 255, 255, 0.92);
+      --panel-soft: #f3f5f7;
+      --line: rgba(16, 24, 40, 0.08);
+      --line-strong: rgba(16, 24, 40, 0.16);
+      --ink: #111827;
+      --muted: #6b7280;
+      --accent: #3768d7;
+      --accent-soft: rgba(55, 104, 215, 0.08);
+      --ok: #1f8f72;
+      --ok-soft: rgba(31, 143, 114, 0.1);
+      --warn: #d6941f;
+      --warn-soft: rgba(214, 148, 31, 0.1);
+      --danger: #d0493e;
+      --danger-soft: rgba(208, 73, 62, 0.1);
       --red: #ff5e52;
       --yellow: #ffd15a;
       --board-top: #2f74ff;
@@ -135,76 +135,62 @@ PAGE_HTML = """
       color: var(--ink);
       font-family: Inter, "Avenir Next", "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at top left, rgba(77,163,255,0.16) 0%, transparent 28%),
-        radial-gradient(circle at top right, rgba(63,214,180,0.10) 0%, transparent 22%),
-        linear-gradient(180deg, var(--bg-top) 0%, var(--bg) 58%, #040a12 100%);
+        radial-gradient(circle at top left, rgba(55,104,215,0.06) 0%, transparent 24%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg) 100%);
     }
     .wrap {
-      max-width: 1240px;
+      max-width: 1120px;
       margin: 0 auto;
-      padding: 24px 22px 48px;
+      padding: 24px 18px 36px;
     }
     .masthead {
       display: grid;
-      gap: 8px;
-      margin-bottom: 18px;
-    }
-    .eyebrow {
-      color: #8dbdff;
-      font-size: 0.76rem;
-      font-weight: 800;
-      text-transform: uppercase;
-      letter-spacing: 0.18em;
+      gap: 4px;
+      margin-bottom: 16px;
     }
     h1 {
       margin: 0;
-      font-size: 2.7rem;
-      line-height: 0.95;
+      font-size: 2.2rem;
+      line-height: 1;
       letter-spacing: -0.06em;
-      font-weight: 810;
-    }
-    .sub {
-      margin: 0;
-      max-width: 44rem;
-      color: var(--muted);
-      line-height: 1.55;
+      font-weight: 780;
     }
     .layout {
       display: grid;
-      gap: 18px;
+      gap: 14px;
       align-items: start;
     }
     @media (min-width: 980px) {
       .layout {
-        grid-template-columns: minmax(0, 1.45fr) minmax(330px, 0.74fr);
+        grid-template-columns: minmax(0, 1.12fr) minmax(300px, 0.78fr);
       }
     }
     .stack {
       display: grid;
-      gap: 14px;
+      gap: 12px;
     }
     .panel {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 10px;
-      backdrop-filter: blur(14px);
-      box-shadow: 0 18px 38px rgba(0,0,0,0.22);
+      border-radius: 8px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
     }
     .banner {
-      padding: 16px 18px 18px;
+      padding: 14px 16px 16px;
       border-bottom: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 100%);
+      background: linear-gradient(180deg, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.3) 100%);
     }
     .banner-label {
       margin-bottom: 10px;
-      color: #8dbdff;
+      color: #637083;
       font-size: 0.74rem;
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 0.18em;
     }
     .banner-title {
-      font-size: 1.95rem;
+      font-size: 1.55rem;
       line-height: 0.98;
       letter-spacing: -0.05em;
       font-weight: 800;
@@ -228,41 +214,44 @@ PAGE_HTML = """
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      padding: 14px 18px 0;
+      padding: 12px 16px 0;
     }
     .chip {
-      padding: 6px 10px;
+      padding: 5px 9px;
       border-radius: 999px;
       border: 1px solid var(--line-strong);
-      background: rgba(255,255,255,0.03);
-      color: #d9e8ff;
+      background: #f7f8fa;
+      color: #374151;
       font-size: 0.75rem;
       font-weight: 700;
     }
     .board-wrap {
-      padding: 16px 18px 18px;
+      padding: 12px 16px 16px;
     }
     .cols {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
-      gap: 8px;
-      margin-bottom: 8px;
+      gap: 6px;
+      margin-bottom: 6px;
       text-align: center;
-      color: #8fa6cb;
-      font-size: 0.74rem;
+      color: #7b8491;
+      font-size: 0.68rem;
       font-weight: 800;
       letter-spacing: 0.12em;
     }
     .board {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
-      gap: 12px;
-      padding: 22px;
-      border-radius: 12px;
+      gap: 9px;
+      padding: 16px;
+      max-width: 520px;
+      width: 100%;
+      margin: 0 auto;
+      border-radius: 10px;
       background:
         radial-gradient(circle at top, rgba(255,255,255,0.12) 0%, transparent 28%),
         linear-gradient(180deg, var(--board-top) 0%, var(--board-bottom) 100%);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 18px 32px rgba(0,0,0,0.26);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 14px 24px rgba(15, 23, 42, 0.14);
     }
     .slot {
       aspect-ratio: 1;
@@ -294,9 +283,10 @@ PAGE_HTML = """
       display: flex;
       gap: 12px;
       flex-wrap: wrap;
-      margin-top: 14px;
+      margin-top: 12px;
       color: var(--muted);
-      font-size: 0.82rem;
+      font-size: 0.78rem;
+      justify-content: center;
     }
     .legend-chip {
       display: inline-flex;
@@ -312,11 +302,11 @@ PAGE_HTML = """
     .legend-dot.yellow { background: var(--yellow); }
     .legend-dot.empty { background: var(--slot-empty); border: 1px solid #a9bcdf; }
     .section {
-      padding: 16px 18px 18px;
+      padding: 14px 16px 16px;
     }
     .section-title {
       margin: 0 0 12px;
-      color: #8dbdff;
+      color: #637083;
       font-size: 0.74rem;
       font-weight: 800;
       text-transform: uppercase;
@@ -334,7 +324,7 @@ PAGE_HTML = """
     }
     .state-box h3 {
       margin: 0 0 8px;
-      color: #8fa6cb;
+      color: #7b8491;
       font-size: 0.7rem;
       letter-spacing: 0.14em;
       text-transform: uppercase;
@@ -380,7 +370,7 @@ PAGE_HTML = """
     button.warning { background: var(--warn); color: #281800; }
     button.danger { background: var(--danger); }
     button.ok { background: var(--ok); }
-    button.secondary { background: #41536f; }
+    button.secondary { background: #6b7280; }
     .confirm-panel {
       padding: 16px 18px 18px;
       border-top: 1px solid var(--line);
@@ -422,9 +412,7 @@ PAGE_HTML = """
 <body>
   <div class="wrap">
     <div class="masthead">
-      <div class="eyebrow">Mission Control</div>
-      <h1>Connect4 Operations Console</h1>
-      <p class="sub">A live technical surface for board state, sorter status, move confirmation, and game-loop control.</p>
+      <h1>Connect4 Dashboard</h1>
     </div>
 
     <div class="layout">
