@@ -116,17 +116,17 @@ PAGE_HTML = """
   <title>Codenect4 Control</title>
   <style>
     :root {
-      --bg: #f6f7fb;
+      --bg: #f5f7fb;
       --card: rgba(255, 255, 255, 0.94);
       --card-strong: #ffffff;
-      --ink: #1d2939;
+      --ink: #101828;
       --muted: #667085;
       --accent: #2563eb;
-      --accent-deep: #17378c;
-      --warn: #c26b12;
-      --danger: #c0362c;
-      --ok: #137a6f;
-      --line: #e4e7ec;
+      --accent-deep: #173b87;
+      --warn: #b96a15;
+      --danger: #c53f35;
+      --ok: #147d6f;
+      --line: #e7eaf0;
       --line-strong: #d0d5dd;
       --red: #df473c;
       --yellow: #f3c94f;
@@ -138,83 +138,78 @@ PAGE_HTML = """
       margin: 0;
       font-family: Inter, "Avenir Next", "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at top left, rgba(37,99,235,0.08) 0%, transparent 30%),
-        radial-gradient(circle at top right, rgba(19,122,111,0.06) 0%, transparent 24%),
-        linear-gradient(180deg, #eef3ff 0%, var(--bg) 48%, #fbfcfe 100%);
+        radial-gradient(circle at top left, rgba(37,99,235,0.06) 0%, transparent 28%),
+        linear-gradient(180deg, #f8fbff 0%, var(--bg) 44%, #f6f8fc 100%);
       color: var(--ink);
     }
     .wrap {
       max-width: 960px;
       margin: 0 auto;
-      padding: 20px 16px 56px;
+      padding: 16px 16px 48px;
     }
     .hero {
-      background: rgba(255, 255, 255, 0.8);
-      border: 1px solid rgba(255, 255, 255, 0.8);
-      border-radius: 28px;
-      padding: 22px;
-      backdrop-filter: blur(12px);
-      box-shadow: 0 18px 44px rgba(29, 41, 57, 0.08);
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      padding: 4px 0 8px;
+      backdrop-filter: none;
+      box-shadow: none;
     }
     h1 {
       margin: 0 0 6px;
-      font-size: 2.05rem;
+      font-size: 1.95rem;
       letter-spacing: 0.02em;
       font-weight: 760;
     }
     .sub {
       margin: 0;
       color: var(--muted);
-      max-width: 44rem;
-    }
-    .grid {
-      display: grid;
-      gap: 16px;
-      margin-top: 16px;
+      max-width: 36rem;
+      font-size: 0.98rem;
     }
     .card {
       background: var(--card);
-      backdrop-filter: blur(10px);
       border: 1px solid var(--line);
-      border-radius: 24px;
+      border-radius: 12px;
       padding: 16px;
-      box-shadow: 0 10px 28px rgba(29, 41, 57, 0.06);
+      box-shadow: 0 6px 18px rgba(16, 24, 40, 0.04);
     }
     .stack {
       display: grid;
-      gap: 16px;
+      gap: 12px;
     }
     .hero-grid {
       display: grid;
-      gap: 16px;
-      margin-top: 16px;
+      gap: 12px;
+      margin-top: 14px;
     }
     @media (min-width: 820px) {
       .hero-grid {
-        grid-template-columns: 1.15fr 0.85fr;
+        grid-template-columns: minmax(0, 1.18fr) minmax(320px, 0.82fr);
         align-items: start;
       }
+      .hero-grid > .stack:first-child { order: 2; }
+      .hero-grid > .stack:last-child { order: 1; }
     }
     .controls {
       display: grid;
-      gap: 10px;
+      gap: 8px;
       grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     }
     button {
       border: 1px solid transparent;
-      border-radius: 14px;
-      padding: 12px 14px;
+      border-radius: 10px;
+      padding: 11px 13px;
       font: inherit;
-      font-weight: 700;
+      font-weight: 650;
       background: var(--accent);
       color: white;
       cursor: pointer;
       box-shadow: none;
-      transition: background 120ms ease, transform 120ms ease, opacity 120ms ease;
+      transition: background 120ms ease, transform 120ms ease, opacity 120ms ease, border-color 120ms ease;
     }
     button:hover {
       opacity: 0.96;
-      transform: translateY(-1px);
     }
     button.secondary { background: #475467; }
     button.warning { background: var(--warn); }
@@ -228,23 +223,25 @@ PAGE_HTML = """
     }
     h2 {
       margin: 0 0 12px;
-      font-size: 1.08rem;
+      font-size: 0.96rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
     }
     .status-pill {
       display: inline-block;
-      padding: 6px 10px;
+      padding: 5px 9px;
       border-radius: 999px;
       background: #f2f4f7;
       color: #344054;
-      font-size: 0.85rem;
+      font-size: 0.75rem;
       font-weight: 700;
-      margin-right: 8px;
-      margin-bottom: 8px;
+      margin-right: 6px;
+      margin-bottom: 6px;
       border: 1px solid #eaecf0;
     }
     .banner {
-      border-radius: 22px;
-      padding: 16px 18px;
+      border-radius: 12px;
+      padding: 16px;
       border: 1px solid var(--line);
       background: rgba(255, 255, 255, 0.94);
     }
@@ -259,7 +256,7 @@ PAGE_HTML = """
     }
     .banner h2 {
       margin: 0;
-      font-size: 1.35rem;
+      font-size: 1.25rem;
     }
     .banner p {
       margin: 8px 0 0;
@@ -278,7 +275,7 @@ PAGE_HTML = """
       border-color: #b6e2d8;
     }
     .confirm-card {
-      border-radius: 22px;
+      border-radius: 12px;
       padding: 16px;
       border: 1px solid var(--line-strong);
       background: #ffffff;
@@ -303,9 +300,9 @@ PAGE_HTML = """
       background:
         radial-gradient(circle at top, rgba(255,255,255,0.18) 0%, transparent 30%),
         linear-gradient(180deg, var(--board-blue-top) 0%, var(--board-blue-bottom) 100%);
-      padding: 16px;
-      border-radius: 26px;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 14px 28px rgba(22,57,131,0.2);
+      padding: 18px;
+      border-radius: 16px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 12px 22px rgba(22,57,131,0.16);
     }
     .slot {
       aspect-ratio: 1;
@@ -349,11 +346,11 @@ PAGE_HTML = """
     }
     .legend {
       display: flex;
-      gap: 14px;
+      gap: 12px;
       flex-wrap: wrap;
       margin-top: 12px;
       color: var(--muted);
-      font-size: 0.92rem;
+      font-size: 0.86rem;
     }
     .legend-chip {
       display: inline-flex;
@@ -371,7 +368,7 @@ PAGE_HTML = """
     .legend-disc.empty { background: var(--slot-empty); border: 1px solid #cad7ec; }
     .meta {
       display: grid;
-      gap: 8px;
+      gap: 4px;
     }
     .meta-row {
       display: flex;
@@ -386,6 +383,7 @@ PAGE_HTML = """
     }
     .meta-label {
       color: var(--muted);
+      font-size: 0.9rem;
     }
     .meta-value {
       font-weight: 700;
@@ -415,13 +413,8 @@ PAGE_HTML = """
     .muted {
       color: var(--muted);
     }
-    .section-note {
-      margin-top: 8px;
-      color: var(--muted);
-      font-size: 0.92rem;
-    }
     .footer-note {
-      margin-top: 18px;
+      margin-top: 14px;
       text-align: center;
       color: var(--muted);
       font-size: 0.85rem;
@@ -432,18 +425,29 @@ PAGE_HTML = """
   <div class="wrap">
     <div class="hero">
       <h1>Connect4 Control</h1>
-      <p class="sub">A minimal remote control surface for the live game loop, sorter, confirmations, and quick manual overrides.</p>
     </div>
 
     <div class="hero-grid">
       <div class="stack">
-        <div id="turnBanner" class="banner">
-          <div class="kicker">Game Flow</div>
-          <h2 id="bannerTitle">Idle</h2>
-          <p id="bannerText">Start the game loop when you're ready.</p>
-        </div>
-
         <div class="card">
+          <div id="turnBanner" class="banner">
+            <div class="kicker">Game Flow</div>
+            <h2 id="bannerTitle">Idle</h2>
+            <p id="bannerText">Start the game loop when you're ready.</p>
+          </div>
+          <div class="cols"><div>6</div><div>5</div><div>4</div><div>3</div><div>2</div><div>1</div><div>0</div></div>
+          <div id="board" class="board"></div>
+          <div class="legend">
+            <div class="legend-chip"><span class="legend-disc yellow"></span><span>You / Yellow</span></div>
+            <div class="legend-chip"><span class="legend-disc red"></span><span>Computer / Red</span></div>
+            <div class="legend-chip"><span class="legend-disc empty"></span><span>Empty</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="card">
+          <h2>System</h2>
           <div id="pills"></div>
           <div class="meta">
             <div class="meta-row"><div class="meta-label">Status</div><div id="metaStatus" class="meta-value">idle</div></div>
@@ -454,28 +458,15 @@ PAGE_HTML = """
         </div>
 
         <div id="yellowCard" class="confirm-card hidden">
-          <h2 class="confirm-title">Confirm Yellow Move</h2>
+          <h2 class="confirm-title">Yellow Confirmation</h2>
           <p id="yellowCopy" class="confirm-copy">Tap the highlighted yellow slot to confirm it, or tap a different slot in the correct column to override it.</p>
         </div>
 
         <div id="redCard" class="confirm-card hidden">
-          <h2 class="confirm-title">Confirm Red Placement</h2>
+          <h2 class="confirm-title">Red Placement</h2>
           <p id="redCopy" class="confirm-copy">The computer has chosen a red column. Place the piece, then confirm it here.</p>
           <div class="controls">
             <button class="warning" onclick="confirmRed()">Red Piece Placed</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="stack">
-        <div class="card">
-          <h2>Board</h2>
-          <div class="cols"><div>6</div><div>5</div><div>4</div><div>3</div><div>2</div><div>1</div><div>0</div></div>
-          <div id="board" class="board"></div>
-          <div class="legend">
-            <div class="legend-chip"><span class="legend-disc yellow"></span><span>You / Yellow</span></div>
-            <div class="legend-chip"><span class="legend-disc red"></span><span>Computer / Red</span></div>
-            <div class="legend-chip"><span class="legend-disc empty"></span><span>Empty</span></div>
           </div>
         </div>
 
@@ -493,16 +484,6 @@ PAGE_HTML = """
           <div class="controls">
             <button class="ok" onclick="enableSorting()">Enable Sorting</button>
             <button class="secondary" onclick="disableSorting()">Disable Sorting</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2>Manual Override</h2>
-          <label class="muted" for="manualCol">Visible column number</label>
-          <input id="manualCol" type="number" min="0" max="6" placeholder="0-6">
-          <div class="controls" style="margin-top:10px;">
-            <button onclick="sendManualHuman()">Submit Human Column</button>
-            <button class="ghost" onclick="correctYellow()">Use As Yellow Correction</button>
           </div>
         </div>
       </div>
@@ -555,27 +536,9 @@ PAGE_HTML = """
       await refresh();
     }
 
-    async function correctYellow() {
-      const val = Number(document.getElementById("manualCol").value);
-      if (Number.isNaN(val)) return;
-      await api("/api/game/yellow-confirm", "POST", { accept: false, column: val });
-      await refresh();
-    }
-
     async function confirmRed() {
       await api("/api/game/red-confirm", "POST");
       await refresh();
-    }
-
-    async function sendManualHuman() {
-      const val = Number(document.getElementById("manualCol").value);
-      if (Number.isNaN(val)) return;
-      await api("/api/game/manual-human", "POST", { column: val });
-      await refresh();
-    }
-
-    function focusManual() {
-      document.getElementById("manualCol").focus();
     }
 
     function getPendingYellowCells(state) {
