@@ -3,6 +3,7 @@ import time
 import board
 import busio
 from adafruit_pca9685 import PCA9685
+from servo_config import SERVO_OFFSETS
 
 
 def move_servo(pca, channel, angle, pulse_min=450, pulse_max=2550):
@@ -52,12 +53,12 @@ def main():
     pca = PCA9685(i2c)
     pca.frequency = 50
 
-    offsets = [0] * 7
+    offsets = SERVO_OFFSETS[:]
 
     try:
         end = min(args.start + args.count, 7)
         for channel in range(args.start, end):
-            offset = 0
+            offset = offsets[channel]
             while True:
                 print(f"Servo {channel} -> offset {offset} degrees")
                 move_servo(pca, channel, offset)
@@ -81,7 +82,7 @@ def main():
         print(offsets)
     finally:
         for channel in range(7):
-            move_servo(pca, channel, 0)
+            move_servo(pca, channel, offsets[channel])
         pca.deinit()
 
 

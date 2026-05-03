@@ -10,13 +10,14 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from tcs_bus import open_tcs34725
+from servo_config import SERVO_OFFSETS
 
 
 SERVO_CHANNEL = 6
 MAX_ANGLE = 270
 PULSE_MIN = 500
 PULSE_MAX = 2500
-OFFSET = 0
+OFFSET = SERVO_OFFSETS[SERVO_CHANNEL]
 
 PLAYER_DROP = 0
 RIGHT_PICKUP = 85
@@ -114,6 +115,108 @@ def summarize(label, samples):
     }
 
 
+def compute_calibration_results(
+    red_samples,
+    yellow_samples,
+    none_samples,
+    clear_thresh,
+    red_margin,
+    yellow_clear,
+    yellow_green_min,
+    yellow_rg_ratio,
+):
+    piece_clears = [s[3] for s in red_samples + yellow_samples]
+    none_clears = [s[3] for s in none_samples]
+    suggested_clear_thresh = clear_thresh
+    suggested_red_margin = red_margin
+    suggested_yellow_clear = yellow_clear
+    suggested_yellow_green_min = yellow_green_min
+    suggested_yellow_rg_ratio = yellow_rg_ratio
+    warnings = []
+
+    if piece_clears and none_clears:
+        piece_min = min(piece_clears)
+        none_max = max(none_clears)
+        suggested_clear_thresh = (piece_min + none_max) / 2.0
+        if piece_min <= none_max:
+            warnings.append("clear ranges overlap; adjust lighting or use color margins.")
+
+    if red_samples:
+        red_margins = [s[0] - max(s[1], s[2]) for s in red_samples]
+        none_red_margins = [s[0] - max(s[1], s[2]) for s in none_samples]
+        if none_red_margins:
+            suggested_red_margin = (min(red_margins) + max(none_red_margins)) / 2.0
+            if min(red_margins) <= max(none_red_margins):
+                warnings.append("red and none red-margin ranges overlap; red separation may need tuning.")
+        else:
+            suggested_red_margin = min(red_margins)
+
+    if yellow_samples:
+        yellow_clears = [s[3] for s in yellow_samples]
+        non_yellow_piece_clears = [s[3] for s in red_samples]
+        if non_yellow_piece_clears:
+            suggested_yellow_clear = (min(yellow_clears) + max(non_yellow_piece_clears)) / 2.0
+            if min(yellow_clears) <= max(non_yellow_piece_clears):
+                warnings.append("red and yellow clear ranges overlap; yellow separation may need tuning.")
+        else:
+            suggested_yellow_clear = min(yellow_clears)
+
+        yellow_greens = [s[1] for s in yellow_samples]
+        non_yellow_greens = [s[1] for s in red_samples]
+        if non_yellow_greens:
+            suggested_yellow_green_min = (min(yellow_greens) + max(non_yellow_greens)) / 2.0
+            if min(yellow_greens) <= max(non_yellow_greens):
+                warnings.append("yellow and non-yellow green ranges overlap; yellow separation may need tuning.")
+        else:
+            suggested_yellow_green_min = min(yellow_greens)
+
+        yellow_green_ratios = [s[1] / max(s[0], 1.0) for s in yellow_samples]
+        non_yellow_green_ratios = [s[1] / max(s[0], 1.0) for s in red_samples]
+        if non_yellow_green_ratios:
+            suggested_yellow_rg_ratio = (
+                min(yellow_green_ratios) + max(non_yellow_green_ratios)
+            ) / 2.0
+            if min(yellow_green_ratios) <= max(non_yellow_green_ratios):
+                warnings.append("yellow and non-yellow g/r ratio ranges overlap; yellow separation may need tuning.")
+        else:
+            suggested_yellow_rg_ratio = min(yellow_green_ratios)
+
+    return {
+        "summary": {
+            "red": summarize("red", red_samples),
+            "yellow": summarize("yellow", yellow_samples),
+            "none": summarize("none", none_samples),
+        },
+        "clear_thresh": suggested_clear_thresh,
+        "red_margin": suggested_red_margin,
+        "yellow_clear": suggested_yellow_clear,
+        "yellow_green_min": suggested_yellow_green_min,
+        "yellow_rg_ratio": suggested_yellow_rg_ratio,
+        "warnings": warnings,
+    }
+
+
+def build_sorter_runtime_args(sensor_bus, calibration_values):
+    return [
+        "--sensor-bus", str(sensor_bus),
+        "--clear-thresh", f"{calibration_values['clear_thresh']:.1f}",
+        "--red-margin", f"{calibration_values['red_margin']:.1f}",
+        "--yellow-clear", f"{calibration_values['yellow_clear']:.1f}",
+        "--yellow-green-min", f"{calibration_values['yellow_green_min']:.1f}",
+        "--yellow-rg-ratio", f"{calibration_values['yellow_rg_ratio']:.3f}",
+    ]
+
+
+def format_sorter_run_command(sensor_bus, calibration_values, debug=True):
+    parts = [
+        "python3 FullSubsystems/sorter.py",
+        *build_sorter_runtime_args(sensor_bus, calibration_values),
+    ]
+    if debug:
+        parts.append("--debug")
+    return " ".join(parts)
+
+
 def calibrate_mode(
     pca,
     sensor,
@@ -189,81 +292,26 @@ def calibrate_mode(
             f"clear_range=({stats['c_min']:.1f}-{stats['c_max']:.1f})"
         )
 
-    piece_clears = [s[3] for s in red_samples + yellow_samples]
-    none_clears = [s[3] for s in none_samples]
-    suggested_clear_thresh = clear_thresh
-    suggested_red_margin = red_margin
-    suggested_yellow_clear = yellow_clear
-    suggested_yellow_green_min = yellow_green_min
-    suggested_yellow_rg_ratio = yellow_rg_ratio
-
-    if piece_clears and none_clears:
-        piece_min = min(piece_clears)
-        none_max = max(none_clears)
-        suggested_clear_thresh = (piece_min + none_max) / 2.0
-        print(f"\nSuggested clear threshold: {suggested_clear_thresh:.1f}")
-        if piece_min <= none_max:
-            print("Warning: clear ranges overlap; adjust lighting or use color margins.")
-
-    if red_samples:
-        red_margins = [s[0] - max(s[1], s[2]) for s in red_samples]
-        none_red_margins = [s[0] - max(s[1], s[2]) for s in none_samples]
-        if none_red_margins:
-            suggested_red_margin = (min(red_margins) + max(none_red_margins)) / 2.0
-            print(f"Suggested red margin (r - max(g,b)): {suggested_red_margin:.1f}")
-            if min(red_margins) <= max(none_red_margins):
-                print("Warning: red and none red-margin ranges overlap; red separation may need tuning.")
-        else:
-            suggested_red_margin = min(red_margins)
-            print(f"Suggested red margin (r - max(g,b)): {suggested_red_margin:.1f}")
-
-    if yellow_samples:
-        yellow_clears = [s[3] for s in yellow_samples]
-        non_yellow_piece_clears = [s[3] for s in red_samples]
-        if non_yellow_piece_clears:
-            suggested_yellow_clear = (min(yellow_clears) + max(non_yellow_piece_clears)) / 2.0
-            print(f"Suggested yellow clear threshold: {suggested_yellow_clear:.1f}")
-            if min(yellow_clears) <= max(non_yellow_piece_clears):
-                print("Warning: red and yellow clear ranges overlap; yellow separation may need tuning.")
-        else:
-            suggested_yellow_clear = min(yellow_clears)
-            print(f"Suggested yellow clear threshold: {suggested_yellow_clear:.1f}")
-
-        yellow_greens = [s[1] for s in yellow_samples]
-        non_yellow_greens = [s[1] for s in red_samples]
-        if non_yellow_greens:
-            suggested_yellow_green_min = (min(yellow_greens) + max(non_yellow_greens)) / 2.0
-            print(f"Suggested yellow green minimum: {suggested_yellow_green_min:.1f}")
-            if min(yellow_greens) <= max(non_yellow_greens):
-                print("Warning: yellow and non-yellow green ranges overlap; yellow separation may need tuning.")
-        else:
-            suggested_yellow_green_min = min(yellow_greens)
-            print(f"Suggested yellow green minimum: {suggested_yellow_green_min:.1f}")
-
-        yellow_green_ratios = [s[1] / max(s[0], 1.0) for s in yellow_samples]
-        non_yellow_green_ratios = [s[1] / max(s[0], 1.0) for s in red_samples]
-        if non_yellow_green_ratios:
-            suggested_yellow_rg_ratio = (
-                min(yellow_green_ratios) + max(non_yellow_green_ratios)
-            ) / 2.0
-            print(f"Suggested yellow g/r ratio minimum: {suggested_yellow_rg_ratio:.3f}")
-            if min(yellow_green_ratios) <= max(non_yellow_green_ratios):
-                print("Warning: yellow and non-yellow g/r ratio ranges overlap; yellow separation may need tuning.")
-        else:
-            suggested_yellow_rg_ratio = min(yellow_green_ratios)
-            print(f"Suggested yellow g/r ratio minimum: {suggested_yellow_rg_ratio:.3f}")
+    results = compute_calibration_results(
+        red_samples,
+        yellow_samples,
+        none_samples,
+        clear_thresh,
+        red_margin,
+        yellow_clear,
+        yellow_green_min,
+        yellow_rg_ratio,
+    )
+    print(f"\nSuggested clear threshold: {results['clear_thresh']:.1f}")
+    print(f"Suggested red margin (r - max(g,b)): {results['red_margin']:.1f}")
+    print(f"Suggested yellow clear threshold: {results['yellow_clear']:.1f}")
+    print(f"Suggested yellow green minimum: {results['yellow_green_min']:.1f}")
+    print(f"Suggested yellow g/r ratio minimum: {results['yellow_rg_ratio']:.3f}")
+    for warning in results["warnings"]:
+        print(f"Warning: {warning}")
 
     print("\nRun with:")
-    print(
-        "python3 FullSubsystems/sorter.py "
-        f"--sensor-bus 3 "
-        f"--clear-thresh {suggested_clear_thresh:.1f} "
-        f"--red-margin {suggested_red_margin:.1f} "
-        f"--yellow-clear {suggested_yellow_clear:.1f} "
-        f"--yellow-green-min {suggested_yellow_green_min:.1f} "
-        f"--yellow-rg-ratio {suggested_yellow_rg_ratio:.3f} "
-        "--debug"
-    )
+    print(format_sorter_run_command(3, results, debug=True))
 
 
 def agitate(pca, base_angle):

@@ -4,6 +4,7 @@ import board
 import busio
 from adafruit_pca9685 import PCA9685
 import adafruit_tcs34725
+from servo_config import SERVO_OFFSETS
 
 class RobotController:
     def __init__(self):
@@ -21,7 +22,7 @@ class RobotController:
         self.top_clear_delta = 500
         # Setup serial connection to Arduino
         self.arduino = serial.Serial('/dev/serial0', 9600, timeout=1)
-        self.offsets = [4, 4, 4, 4, 4, 0, 0]
+        self.offsets = SERVO_OFFSETS[:]
 
     def _calibrate_clear_baseline(self, sensor):
         samples = []

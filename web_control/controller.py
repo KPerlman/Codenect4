@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from servo_config import SERVO_MAX_ANGLES, SERVO_OFFSETS
 
 from FullSubsystems.game_state_cv import (
     boards_equal,
@@ -27,9 +28,6 @@ from connect4_vision import Connect4Tracker
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SERVO_ZERO_OFFSETS = [4, 5, 4, 4, 4, 3, 0]
-
-
 def move_servo_zero_position(pca, channel, angle, max_angle=180, offset=0):
     pulse_min = 450
     pulse_max = 2550
@@ -67,6 +65,13 @@ class SharedState:
     tracker_active: bool = False
     tracker_calibrated: bool = False
     camera_source: str | None = None
+    sorter_calibration_running: bool = False
+    sorter_calibration_prompt: str | None = None
+    sorter_calibration_sample: dict[str, float] | None = None
+    sorter_calibration_counts: dict[str, int] = field(
+        default_factory=lambda: {"red": 0, "yellow": 0, "none": 0}
+    )
+    sorter_calibration_values: dict[str, float] | None = None
     updated_at: float = field(default_factory=time.time)
 
     def to_dict(self):
@@ -92,18 +97,27 @@ class SharedState:
             "tracker_active": self.tracker_active,
             "tracker_calibrated": self.tracker_calibrated,
             "camera_source": self.camera_source,
+            "sorter_calibration_running": self.sorter_calibration_running,
+            "sorter_calibration_prompt": self.sorter_calibration_prompt,
+            "sorter_calibration_sample": self.sorter_calibration_sample,
+            "sorter_calibration_counts": self.sorter_calibration_counts,
+            "sorter_calibration_values": self.sorter_calibration_values,
             "updated_at": self.updated_at,
         }
 
 
 class RobotWebController:
     def __init__(self):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._state = SharedState()
         self._game_thread = None
         self._game_stop_event = None
         self._game_commands = None
         self._sorter_process = None
+        self._sorter_runtime_args = []
+        self._sorter_calibration_thread = None
+        self._sorter_calibration_stop_event = None
+        self._sorter_calibration_commands = None
 
     def get_state(self):
         with self._lock:
@@ -170,11 +184,21 @@ class RobotWebController:
 
     def enable_sorting(self):
         with self._lock:
+            calibration_running = (
+                self._sorter_calibration_thread is not None
+                and self._sorter_calibration_thread.is_alive()
+            )
+            runtime_args = list(self._sorter_runtime_args)
+        if calibration_running:
+            self._update_state(message="Sorter calibration is running", error=None)
+            return self.get_state()
+
+        with self._lock:
             if self._sorter_process and self._sorter_process.poll() is None:
                 self._update_state(sorting_enabled=True, sorter_running=True, message="Sorter already running")
                 return self._state.to_dict()
 
-        cmd = [sys.executable, str(ROOT_DIR / "FullSubsystems" / "sorter.py")]
+        cmd = [sys.executable, str(ROOT_DIR / "FullSubsystems" / "sorter.py"), *runtime_args]
         process = subprocess.Popen(
             cmd,
             cwd=str(ROOT_DIR),
@@ -216,6 +240,43 @@ class RobotWebController:
         self._game_commands.put({"type": "manual_human_move", "column": column})
         return self.get_state()
 
+    def start_sorter_calibration(self, sensor_bus=3):
+        self.disable_sorting()
+        with self._lock:
+            if self._sorter_calibration_thread and self._sorter_calibration_thread.is_alive():
+                return self._state.to_dict()
+            self._sorter_calibration_stop_event = threading.Event()
+            self._sorter_calibration_commands = queue.Queue()
+            worker = SorterCalibrationWorker(
+                controller=self,
+                stop_event=self._sorter_calibration_stop_event,
+                commands=self._sorter_calibration_commands,
+                sensor_bus=sensor_bus,
+            )
+            self._sorter_calibration_thread = threading.Thread(
+                target=worker.run,
+                daemon=True,
+                name="sorter-calibration-worker",
+            )
+            self._sorter_calibration_thread.start()
+            self._update_state(
+                sorter_calibration_running=True,
+                sorter_calibration_prompt="Starting sorter calibration",
+                sorter_calibration_sample=None,
+                sorter_calibration_counts={"red": 0, "yellow": 0, "none": 0},
+                message="Starting sorter calibration",
+                error=None,
+                sorter_running=False,
+                sorting_enabled=False,
+            )
+            return self._state.to_dict()
+
+    def submit_sorter_calibration_label(self, label):
+        if self._sorter_calibration_commands is None:
+            return self.get_state()
+        self._sorter_calibration_commands.put({"type": "label", "label": label})
+        return self.get_state()
+
     def zero_servos(self):
         try:
             import board
@@ -231,9 +292,10 @@ class RobotWebController:
                         pca,
                         channel,
                         0,
-                        offset=SERVO_ZERO_OFFSETS[channel],
+                        max_angle=SERVO_MAX_ANGLES[channel],
+                        offset=SERVO_OFFSETS[channel],
                     )
-                time.sleep(0.15)
+                time.sleep(0.85)
             finally:
                 pca.deinit()
             self._update_state(message="All servos moved to zero", error=None)
@@ -612,3 +674,180 @@ class GameLoopWorker:
         finally:
             if cap is not None:
                 cap.release()
+
+
+class SorterCalibrationWorker:
+    def __init__(self, controller, stop_event, commands, sensor_bus):
+        self.controller = controller
+        self.stop_event = stop_event
+        self.commands = commands
+        self.sensor_bus = sensor_bus
+
+    def _wait_for_label(self):
+        while not self.stop_event.is_set():
+            try:
+                command = self.commands.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if command["type"] == "label":
+                return command["label"]
+        return "q"
+
+    def run(self):
+        pca = None
+        try:
+            import board
+            import busio
+            from adafruit_pca9685 import PCA9685
+
+            from FullSubsystems.sorter import (
+                DETECT,
+                DETECT_SETTLE,
+                DROP_HOLD,
+                DROP_SETTLE,
+                LEFT_PICKUP,
+                MAX_ANGLE,
+                OFFSET,
+                PICKUP_SETTLE,
+                PLAYER_DROP,
+                RIGHT_PICKUP,
+                ROBOT_DROP,
+                SERVO_CHANNEL,
+                YELLOW_CLEAR,
+                YELLOW_GREEN_MIN,
+                YELLOW_RG_RATIO,
+                CLEAR_THRESH,
+                RED_MARGIN,
+                build_sorter_runtime_args,
+                compute_calibration_results,
+                format_sorter_run_command,
+                move_servo,
+                read_sample,
+            )
+            from tcs_bus import open_tcs34725
+
+            i2c_pca = busio.I2C(board.SCL, board.SDA)
+            pca = PCA9685(i2c_pca)
+            pca.frequency = 50
+            sensor = open_tcs34725(self.sensor_bus, integration_time_ms=100, gain=4)
+
+            red_samples = []
+            yellow_samples = []
+            none_samples = []
+            next_pickup_right = True
+
+            move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+            time.sleep(1.0)
+
+            while not self.stop_event.is_set():
+                pickup_angle = RIGHT_PICKUP if next_pickup_right else LEFT_PICKUP
+                next_pickup_right = not next_pickup_right
+
+                move_servo(pca, SERVO_CHANNEL, pickup_angle, max_angle=MAX_ANGLE, offset=OFFSET)
+                time.sleep(PICKUP_SETTLE)
+
+                move_servo(pca, SERVO_CHANNEL, DETECT, max_angle=MAX_ANGLE, offset=OFFSET)
+                time.sleep(DETECT_SETTLE)
+
+                r, g, b, clear = read_sample(sensor)
+                sample = {"r": r, "g": g, "b": b, "clear": clear}
+                counts = {
+                    "red": len(red_samples),
+                    "yellow": len(yellow_samples),
+                    "none": len(none_samples),
+                }
+                self.controller._update_state(
+                    sorter_calibration_running=True,
+                    sorter_calibration_prompt=(
+                        "Label the current piece as red, yellow, none, or finish calibration."
+                    ),
+                    sorter_calibration_sample=sample,
+                    sorter_calibration_counts=counts,
+                    message="Sorter calibration awaiting label",
+                    error=None,
+                )
+
+                label = self._wait_for_label()
+                if label == "q":
+                    break
+                if label not in {"r", "y", "n"}:
+                    continue
+
+                if label == "r":
+                    red_samples.append((r, g, b, clear))
+                    move_servo(pca, SERVO_CHANNEL, ROBOT_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+                    time.sleep(DROP_SETTLE)
+                    time.sleep(DROP_HOLD)
+                elif label == "y":
+                    yellow_samples.append((r, g, b, clear))
+                    move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+                    time.sleep(DROP_SETTLE)
+                    time.sleep(DROP_HOLD)
+                else:
+                    none_samples.append((r, g, b, clear))
+                    move_servo(pca, SERVO_CHANNEL, pickup_angle, max_angle=MAX_ANGLE, offset=OFFSET)
+                    time.sleep(DROP_SETTLE)
+                    time.sleep(DROP_HOLD)
+
+            results = compute_calibration_results(
+                red_samples,
+                yellow_samples,
+                none_samples,
+                CLEAR_THRESH,
+                RED_MARGIN,
+                YELLOW_CLEAR,
+                YELLOW_GREEN_MIN,
+                YELLOW_RG_RATIO,
+            )
+            runtime_args = build_sorter_runtime_args(self.sensor_bus, results)
+            counts = {
+                "red": len(red_samples),
+                "yellow": len(yellow_samples),
+                "none": len(none_samples),
+            }
+
+            with self.controller._lock:
+                self.controller._sorter_runtime_args = runtime_args
+
+            self.controller._update_state(
+                sorter_calibration_running=False,
+                sorter_calibration_prompt="Calibration complete. Future sorting runs will use these calibration values.",
+                sorter_calibration_sample=None,
+                sorter_calibration_counts=counts,
+                sorter_calibration_values={
+                    "clear_thresh": results["clear_thresh"],
+                    "red_margin": results["red_margin"],
+                    "yellow_clear": results["yellow_clear"],
+                    "yellow_green_min": results["yellow_green_min"],
+                    "yellow_rg_ratio": results["yellow_rg_ratio"],
+                },
+                message=(
+                    "Sorter calibration complete. "
+                    + format_sorter_run_command(self.sensor_bus, results, debug=False)
+                ),
+                error=None,
+                sorting_enabled=False,
+                sorter_running=False,
+            )
+            with self.controller._lock:
+                self.controller._sorter_calibration_thread = None
+        except Exception as exc:
+            self.controller._update_state(
+                sorter_calibration_running=False,
+                sorter_calibration_prompt=f"Calibration failed: {exc}",
+                sorter_calibration_sample=None,
+                message="Sorter calibration failed",
+                error=str(exc),
+            )
+        finally:
+            with self.controller._lock:
+                if self.controller._sorter_calibration_thread is threading.current_thread():
+                    self.controller._sorter_calibration_thread = None
+            if pca is not None:
+                try:
+                    from FullSubsystems.sorter import MAX_ANGLE, OFFSET, PLAYER_DROP, SERVO_CHANNEL, move_servo
+
+                    move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
+                except Exception:
+                    pass
+                pca.deinit()

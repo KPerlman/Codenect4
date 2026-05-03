@@ -1,15 +1,23 @@
 import time
+import sys
+from pathlib import Path
 import board
 import busio
 from adafruit_pca9685 import PCA9685
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from tcs_bus import open_tcs34725
+from servo_config import SERVO_OFFSETS
 
 
 SERVO_CHANNEL = 6
 MAX_ANGLE = 270
 PULSE_MIN = 500
 PULSE_MAX = 2500
-OFFSET = 0
+OFFSET = SERVO_OFFSETS[SERVO_CHANNEL]
 
 PLAYER_DROP = 0
 RIGHT_PICKUP = 85

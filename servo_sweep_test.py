@@ -2,8 +2,8 @@ import time
 import board
 import busio
 from adafruit_pca9685 import PCA9685
+from servo_config import SERVO_OFFSETS
 
-OFFSETS = [4, 5, 4, 4, 4, 3, 0]
 
 
 def move_servo(pca, channel, angle, max_angle=180, offset=0):
@@ -32,16 +32,16 @@ def main():
                     time.sleep(1)
                 else:
                     print(f"Servo {channel} -> 100")
-                    move_servo(pca, channel, 100, offset=OFFSETS[channel])
+                    move_servo(pca, channel, 100, offset=SERVO_OFFSETS[channel])
                     time.sleep(1)
                     print(f"Servo {channel} -> 0")
-                    move_servo(pca, channel, 0, offset=OFFSETS[channel])
+                    move_servo(pca, channel, 0, offset=SERVO_OFFSETS[channel])
                     time.sleep(0.5)
     except KeyboardInterrupt:
         pass
     finally:
         for channel in range(7):
-            move_servo(pca, channel, 0, offset=OFFSETS[channel])
+            move_servo(pca, channel, 0, offset=SERVO_OFFSETS[channel])
         pca.deinit()
 
 

@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03a"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03c"
 
 
 class StartGameRequest(BaseModel):
@@ -22,6 +22,10 @@ class StartGameRequest(BaseModel):
 class ConfirmYellowRequest(BaseModel):
     accept: bool = True
     column: int | None = None
+
+
+class SorterCalibrationLabelRequest(BaseModel):
+    label: str
 
 
 @app.get("/api/state")
@@ -85,6 +89,16 @@ def api_enable_sorting():
 @app.post("/api/sorting/disable")
 def api_disable_sorting():
     return controller.disable_sorting()
+
+
+@app.post("/api/sorting/calibration/start")
+def api_start_sorter_calibration():
+    return controller.start_sorter_calibration(sensor_bus=3)
+
+
+@app.post("/api/sorting/calibration/label")
+def api_sorter_calibration_label(request: SorterCalibrationLabelRequest):
+    return controller.submit_sorter_calibration_label(request.label)
 
 
 @app.post("/api/servos/zero")
@@ -372,6 +386,11 @@ PAGE_HTML = """
       opacity: 0.96;
       transform: translateY(-1px);
     }
+    button:disabled {
+      opacity: 0.45;
+      transform: none;
+      cursor: not-allowed;
+    }
     button.warning { background: var(--warn); color: #281800; }
     button.danger { background: var(--danger); }
     button.ok { background: var(--ok); }
@@ -480,11 +499,26 @@ PAGE_HTML = """
               <div class="state-kv">
                 <div class="state-row"><span>Sorting enabled</span><strong id="stateSortingEnabled">no</strong></div>
                 <div class="state-row"><span>Sorter process</span><strong id="stateSorterRunning">off</strong></div>
+                <div class="state-row"><span>Calibration</span><strong id="stateSorterCalibration">idle</strong></div>
                 <div class="state-row"><span>Suggested red</span><strong id="metaRed">-</strong></div>
                 <div class="state-row"><span>Tracker calibrated</span><strong id="stateTrackerCalibrated">no</strong></div>
                 <div class="state-row"><span>Camera source</span><strong id="stateCameraSource">n/a</strong></div>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div id="sorterCalibrationCard" class="panel confirm-panel">
+          <div class="section-title">Sorter Calibration</div>
+          <div id="sorterCalibrationTitle" class="confirm-title">Calibration idle</div>
+          <div id="sorterCalibrationCopy" class="confirm-copy">Calibration will step the sorter to detect and wait for a label. Future sorting runs will use the saved values.</div>
+          <div id="sorterCalibrationSample" class="confirm-copy">No sample yet.</div>
+          <div id="sorterCalibrationCounts" class="confirm-copy">red 0 | yellow 0 | none 0</div>
+          <div class="controls">
+            <button id="sorterLabelRed" class="danger" onclick="labelSorterCalibration('r')">Red</button>
+            <button id="sorterLabelYellow" class="warning" onclick="labelSorterCalibration('y')">Yellow</button>
+            <button id="sorterLabelNone" class="secondary" onclick="labelSorterCalibration('n')">None</button>
+            <button id="sorterLabelQuit" class="ok" onclick="labelSorterCalibration('q')">Quit</button>
           </div>
         </div>
 
@@ -517,6 +551,7 @@ PAGE_HTML = """
           <div class="controls">
             <button class="ok" onclick="enableSorting()">Enable Sorting</button>
             <button class="secondary" onclick="disableSorting()">Disable Sorting</button>
+            <button onclick="startSorterCalibration()">Start Sorter Calibration</button>
           </div>
         </div>
 
@@ -569,6 +604,16 @@ PAGE_HTML = """
 
     async function disableSorting() {
       await api("/api/sorting/disable", "POST");
+      await refresh();
+    }
+
+    async function startSorterCalibration() {
+      await api("/api/sorting/calibration/start", "POST");
+      await refresh();
+    }
+
+    async function labelSorterCalibration(label) {
+      await api("/api/sorting/calibration/label", "POST", { label });
       await refresh();
     }
 
@@ -652,11 +697,19 @@ PAGE_HTML = """
       pills.push(`<span class="chip">phase: ${state.game_phase || "idle"}</span>`);
       pills.push(`<span class="chip">turn: ${state.turn_state || "idle"}</span>`);
       pills.push(`<span class="chip">sorting: ${state.sorter_running ? "running" : "off"}</span>`);
+      pills.push(`<span class="chip">sorter cal: ${state.sorter_calibration_running ? "live" : "idle"}</span>`);
       pills.push(`<span class="chip">tracker: ${state.tracker_calibrated ? "calibrated" : "calibrating"}</span>`);
       document.getElementById("pills").innerHTML = pills.join("");
     }
 
     function bannerConfig(state) {
+      if (state.sorter_calibration_running) {
+        return {
+          className: "banner waiting",
+          title: "Sorter calibration active",
+          text: state.sorter_calibration_prompt || "Label the current sorter sample from the calibration panel.",
+        };
+      }
       if (state.awaiting_confirmation === "yellow") {
         return {
           className: "banner waiting",
@@ -749,6 +802,8 @@ PAGE_HTML = """
 
       document.getElementById("stateSortingEnabled").textContent = state.sorting_enabled ? "yes" : "no";
       document.getElementById("stateSorterRunning").textContent = state.sorter_running ? "running" : "off";
+      document.getElementById("stateSorterCalibration").textContent =
+        state.sorter_calibration_running ? "running" : "idle";
       document.getElementById("stateTrackerActive").textContent = state.tracker_active ? "yes" : "no";
       document.getElementById("stateTrackerCalibrated").textContent = state.tracker_calibrated ? "yes" : "no";
 
@@ -764,6 +819,42 @@ PAGE_HTML = """
         state.suggested_red_column !== null ? state.suggested_red_column : "-";
       document.getElementById("stateUpdated").textContent =
         state.updated_at ? new Date(state.updated_at * 1000).toLocaleTimeString() : "-";
+    }
+
+    function renderSorterCalibration(state) {
+      const title = document.getElementById("sorterCalibrationTitle");
+      const copy = document.getElementById("sorterCalibrationCopy");
+      const sample = document.getElementById("sorterCalibrationSample");
+      const counts = document.getElementById("sorterCalibrationCounts");
+      const redBtn = document.getElementById("sorterLabelRed");
+      const yellowBtn = document.getElementById("sorterLabelYellow");
+      const noneBtn = document.getElementById("sorterLabelNone");
+      const quitBtn = document.getElementById("sorterLabelQuit");
+      const calibrationCounts = state.sorter_calibration_counts || { red: 0, yellow: 0, none: 0 };
+      const active = !!state.sorter_calibration_running;
+
+      if (active) {
+        title.textContent = "Calibration active";
+      } else if (state.sorter_calibration_prompt) {
+        title.textContent = "Calibration update";
+      } else {
+        title.textContent = "Calibration idle";
+      }
+
+      copy.textContent = state.sorter_calibration_prompt || "Press Start Sorter Calibration to begin labeling pieces.";
+
+      if (state.sorter_calibration_sample) {
+        const s = state.sorter_calibration_sample;
+        sample.textContent = `Sample r=${s.r.toFixed(1)} g=${s.g.toFixed(1)} b=${s.b.toFixed(1)} clear=${s.clear.toFixed(1)}`;
+      } else {
+        sample.textContent = "No sample yet.";
+      }
+
+      counts.textContent = `red ${calibrationCounts.red ?? 0} | yellow ${calibrationCounts.yellow ?? 0} | none ${calibrationCounts.none ?? 0}`;
+      redBtn.disabled = !active;
+      yellowBtn.disabled = !active;
+      noneBtn.disabled = !active;
+      quitBtn.disabled = !active;
     }
 
     function renderConfirmationCards(state) {
@@ -793,6 +884,7 @@ PAGE_HTML = """
       renderPills(latestState);
       renderMeta(latestState);
       renderStateBlocks(latestState);
+      renderSorterCalibration(latestState);
       renderConfirmationCards(latestState);
       renderBoard(latestState.current_board);
     }
