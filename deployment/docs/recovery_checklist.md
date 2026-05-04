@@ -21,33 +21,41 @@ git clone <YOUR_REPO_URL> Codenect4
 cd Codenect4
 ```
 
-4. Rebuild the venv:
+4. Configure Pi interfaces and reboot:
+
+```bash
+sudo bash deployment/scripts/configure_pi_interfaces.sh
+sudo reboot
+```
+
+5. Reconnect, return to the repo, then run the bootstrap:
 
 ```bash
 bash deployment/scripts/bootstrap_pi.sh
 ```
 
-5. If you want to run the steps manually instead of the bootstrap script:
+6. If you want to run the steps manually instead of the bootstrap script:
 
 ```bash
+bash deployment/scripts/configure_pi_interfaces.sh
 bash deployment/scripts/setup_venv.sh
 bash deployment/scripts/install_service.sh
 sudo systemctl start codenect4-web.service
 ```
 
-6. Verify health:
+7. Verify health:
 
 ```bash
 curl http://127.0.0.1:8000/health
 ```
 
-7. Restore Funnel if needed:
+8. Restore Funnel if needed:
 
 ```bash
 bash deployment/scripts/enable_funnel.sh
 ```
 
-8. Verify access URLs:
+9. Verify access URLs:
 
 ```bash
 bash deployment/scripts/show_urls.sh
@@ -60,11 +68,15 @@ bash deployment/scripts/show_urls.sh
 - `tailscale funnel status`
 - `ls /dev/video*`
 - `ls /dev/i2c*`
+- `fuser /dev/serial0`
+- `i2cdetect -y 1`
 
 ## High-Risk Things To Recheck
 
 - USB webcam still appears as `/dev/video0`
-- I2C devices still enumerate
+- I2C bus 1 exists and the PCA9685 appears at `0x40`
+- `cmdline.txt` no longer contains `console=serial0,115200`
+- `/dev/serial0` is not owned by `serial-getty`
 - stepper controller still answers on `/dev/serial0`
 - the repo is on the expected branch
 - the Funnel URL is the one you expect

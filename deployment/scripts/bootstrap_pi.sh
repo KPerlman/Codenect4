@@ -10,6 +10,9 @@ echo "Starting Pi bootstrap for:"
 echo "  Repo: $REPO_DIR"
 echo
 
+bash "$SCRIPT_DIR/configure_pi_interfaces.sh"
+echo
+
 bash "$SCRIPT_DIR/setup_venv.sh" "$REPO_DIR"
 echo
 
@@ -28,5 +31,8 @@ bash "$SCRIPT_DIR/show_urls.sh"
 echo
 
 echo "Bootstrap complete."
+echo "Important:"
+echo "  Reboot the Pi before hardware testing so I2C and serial-console changes fully apply."
+echo
 echo "Optional next step for public access:"
 echo "  bash deployment/scripts/enable_funnel.sh"

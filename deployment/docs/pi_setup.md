@@ -37,7 +37,22 @@ git fetch origin
 git switch <BRANCH_NAME>
 ```
 
-## 3. Build The Python Environment
+## 3. Configure Pi Interfaces
+
+Before hardware testing, configure the Pi so:
+- hardware I2C is enabled on bus 1
+- the Linux serial console/getty is removed from `/dev/serial0`
+
+From the repo root:
+
+```bash
+sudo bash deployment/scripts/configure_pi_interfaces.sh
+sudo reboot
+```
+
+After reboot, reconnect and return to the repo root.
+
+## 4. Build The Python Environment
 
 From the repo root:
 
@@ -51,7 +66,24 @@ This creates:
 - upgraded `pip`, `setuptools`, `wheel`
 - project dependencies from `requirements.txt`
 
-## 4. Verify The Web Server Manually
+## 5. Verify The Pi Hardware Interfaces
+
+Before moving on, verify the two common failure points are fixed:
+
+```bash
+ls -l /dev/i2c*
+cat /boot/firmware/cmdline.txt 2>/dev/null || cat /boot/cmdline.txt
+fuser /dev/serial0
+i2cdetect -y 1
+```
+
+Expected:
+- `/dev/i2c-1` exists
+- `cmdline.txt` does not contain `console=serial0,115200`
+- `fuser /dev/serial0` is empty unless your app is actively using it
+- `i2cdetect -y 1` shows the PCA9685 around `0x40`
+
+## 6. Verify The Web Server Manually
 
 Before using systemd, make sure the server works directly:
 
@@ -62,7 +94,7 @@ python web_control_server.py
 
 If it starts successfully, stop it with `Ctrl+C`.
 
-## 5. Install The systemd Service
+## 7. Install The systemd Service
 
 From the repo root:
 
@@ -83,7 +115,7 @@ To make it boot automatically:
 sudo systemctl enable codenect4-web.service
 ```
 
-## 6. Check The Dashboard
+## 8. Check The Dashboard
 
 The default health endpoint:
 
@@ -106,7 +138,7 @@ cd /home/connect4/Desktop/Codenect4
 bash deployment/scripts/bootstrap_pi.sh
 ```
 
-## 7. Restore Tailscale Funnel
+## 9. Restore Tailscale Funnel
 
 If Tailscale is already installed and logged in:
 
@@ -120,7 +152,7 @@ Then inspect:
 tailscale funnel status
 ```
 
-## 8. Common Service Commands
+## 10. Common Service Commands
 
 ```bash
 sudo systemctl restart codenect4-web.service
@@ -130,7 +162,7 @@ sudo systemctl status codenect4-web.service
 journalctl -u codenect4-web.service -f
 ```
 
-## 9. If The venv Is Broken
+## 11. If The venv Is Broken
 
 Blow away the environment and rebuild it:
 
@@ -140,7 +172,7 @@ bash deployment/scripts/setup_venv.sh
 sudo systemctl restart codenect4-web.service
 ```
 
-## 10. If The Service Hangs On Restart
+## 12. If The Service Hangs On Restart
 
 Use:
 
