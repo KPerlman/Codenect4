@@ -67,6 +67,11 @@ This creates:
 - `venv/`
 - upgraded `pip`, `setuptools`, `wheel`
 - project dependencies from `requirements.txt`
+- the Pi GPIO backend used by Blinka (`lgpio`)
+
+Important note:
+- on Raspberry Pi OS Trixie / Python 3.13, `lgpio` may need the native `lg` library from the official lg archive installed first
+- the bootstrap flow now handles that automatically with `deployment/scripts/install_lgpio.sh`
 
 ## 5. Verify The Pi Hardware Interfaces
 
@@ -144,6 +149,12 @@ If you want the fast path instead of the step-by-step flow:
 cd /home/connect4/Desktop/Codenect4
 bash deployment/scripts/bootstrap_pi.sh
 ```
+
+That fast path now:
+- configures I2C and UART
+- installs the native `lg` library from the official lg archive
+- builds the Python venv
+- installs the systemd service
 
 ## 9. Restore Tailscale Funnel
 

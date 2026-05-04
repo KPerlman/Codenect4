@@ -5,6 +5,7 @@ numpy
 opencv-python
 pyserial
 adafruit-blinka
+lgpio
 adafruit-circuitpython-pca9685
 adafruit-circuitpython-tcs34725
 adafruit-extended-bus

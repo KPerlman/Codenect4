@@ -13,6 +13,9 @@ echo
 bash "$SCRIPT_DIR/configure_pi_interfaces.sh"
 echo
 
+bash "$SCRIPT_DIR/install_lgpio.sh"
+echo
+
 bash "$SCRIPT_DIR/setup_venv.sh" "$REPO_DIR"
 echo
 
