@@ -36,6 +36,8 @@ GATE_DEFAULT_ACCEL = 400
 GATE_DEFAULT_STEPS = 1000
 BELT_CLEAR_THRESH = 2500.0
 BELT_POST_DETECT_STEPS = 1000
+BELT_GAME_SPEED = 4000
+BELT_GAME_ACCEL = 400
 
 
 def move_servo_zero_position(pca, channel, angle, max_angle=180, offset=0):
@@ -947,8 +949,8 @@ class GameLoopWorker:
         import serial
 
         state = self.controller.get_state()
-        speed = int(state["belt_speed"])
-        accel = int(state["belt_accel"])
+        speed = BELT_GAME_SPEED
+        accel = BELT_GAME_ACCEL
         clear_thresh = float(state["belt_clear_thresh"])
         detect_mode = state["belt_detect_mode"]
         post_steps = int(state["belt_post_detect_steps"])
@@ -961,6 +963,8 @@ class GameLoopWorker:
             belt_running=True,
             belt_status="running",
             belt_mode="continuous",
+            belt_speed=speed,
+            belt_accel=accel,
             belt_error=None,
             message="Feeding red piece with belt",
         )
