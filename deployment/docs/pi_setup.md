@@ -41,6 +41,8 @@ git switch <BRANCH_NAME>
 
 Before hardware testing, configure the Pi so:
 - hardware I2C is enabled on bus 1
+- sorter software I2C is enabled on bus 3 over GPIO17/27
+- `/dev/serial0` is moved onto the stable PL011 UART
 - the Linux serial console/getty is removed from `/dev/serial0`
 
 From the repo root:
@@ -72,16 +74,21 @@ Before moving on, verify the two common failure points are fixed:
 
 ```bash
 ls -l /dev/i2c*
+ls -l /dev/serial0
 cat /boot/firmware/cmdline.txt 2>/dev/null || cat /boot/cmdline.txt
 fuser /dev/serial0
 i2cdetect -y 1
+i2cdetect -y 3
 ```
 
 Expected:
 - `/dev/i2c-1` exists
+- `/dev/i2c-3` exists
+- `/dev/serial0` points to `/dev/ttyAMA0`
 - `cmdline.txt` does not contain `console=serial0,115200`
 - `fuser /dev/serial0` is empty unless your app is actively using it
 - `i2cdetect -y 1` shows the PCA9685 around `0x40`
+- `i2cdetect -y 3` shows the sorter TCS34725 around `0x29`
 
 ## 6. Verify The Web Server Manually
 

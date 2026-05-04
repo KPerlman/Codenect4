@@ -68,13 +68,17 @@ bash deployment/scripts/show_urls.sh
 - `tailscale funnel status`
 - `ls /dev/video*`
 - `ls /dev/i2c*`
+- `ls -l /dev/serial0`
 - `fuser /dev/serial0`
 - `i2cdetect -y 1`
+- `i2cdetect -y 3`
 
 ## High-Risk Things To Recheck
 
 - USB webcam still appears as `/dev/video0`
 - I2C bus 1 exists and the PCA9685 appears at `0x40`
+- I2C bus 3 exists and the sorter TCS34725 appears at `0x29`
+- `/dev/serial0` points to `/dev/ttyAMA0`
 - `cmdline.txt` no longer contains `console=serial0,115200`
 - `/dev/serial0` is not owned by `serial-getty`
 - stepper controller still answers on `/dev/serial0`

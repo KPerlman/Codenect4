@@ -28,6 +28,10 @@ Current high-level usage:
 
 - sorter TCS34725 uses the custom sensor bus path used by `open_tcs34725(...)`
 - sorter code has historically used sensor bus `3`
+- deployment setup configures that as an `i2c-gpio` overlay on:
+  - `GPIO17` = SDA
+  - `GPIO27` = SCL
+  - expected device path: `/dev/i2c-3`
 
 ## Belt Color Sensor
 

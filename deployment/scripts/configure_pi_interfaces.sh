@@ -41,6 +41,25 @@ elif ! grep -Eq '^[[:space:]]*dtparam=i2c_arm=on([[:space:]]*#.*)?$' "$BOOT_CONF
   reboot_required=1
 fi
 
+if grep -Eq '^[[:space:]]*enable_uart=0([[:space:]]*#.*)?$' "$BOOT_CONFIG"; then
+  sed -i -E 's/^[[:space:]]*enable_uart=0([[:space:]]*#.*)?$/enable_uart=1/' "$BOOT_CONFIG"
+  reboot_required=1
+elif ! grep -Eq '^[[:space:]]*enable_uart=1([[:space:]]*#.*)?$' "$BOOT_CONFIG"; then
+  printf '\n# Force the primary UART on for Pi <-> Arduino comms\nenable_uart=1\n' >> "$BOOT_CONFIG"
+  reboot_required=1
+fi
+
+if ! grep -Eq '^[[:space:]]*dtoverlay=disable-bt([[:space:]]*#.*)?$' "$BOOT_CONFIG"; then
+  printf '\n# Free the PL011 UART for the Arduino link\ndtoverlay=disable-bt\n' >> "$BOOT_CONFIG"
+  reboot_required=1
+fi
+
+SORTER_I2C_OVERLAY='dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=17,i2c_gpio_scl=27,i2c_gpio_delay_us=2'
+if ! grep -Fqx "$SORTER_I2C_OVERLAY" "$BOOT_CONFIG"; then
+  printf '\n# Enable sorter TCS34725 software I2C bus on GPIO17/27\n%s\n' "$SORTER_I2C_OVERLAY" >> "$BOOT_CONFIG"
+  reboot_required=1
+fi
+
 original_cmdline="$(cat "$CMDLINE_FILE")"
 updated_cmdline="$(printf '%s\n' "$original_cmdline" | sed -E 's/(^| )console=(serial0|ttyS0|ttyAMA0),115200//g; s/  +/ /g; s/^ //; s/ $//')"
 
@@ -58,6 +77,8 @@ done
 echo
 echo "Interface configuration complete."
 echo "- Hardware I2C is configured for bus 1."
+echo "- Primary UART is forced on and Bluetooth is disabled so /dev/serial0 maps to the stable PL011 UART."
+echo "- Sorter software I2C overlay is configured for /dev/i2c-3 on GPIO17/27."
 echo "- Serial login/getty is disabled on ttyS0/ttyAMA0 so /dev/serial0 is reserved for the Arduino."
 
 if [[ "$reboot_required" -eq 1 ]]; then

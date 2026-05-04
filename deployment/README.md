@@ -17,7 +17,7 @@ Use it when:
   - `wiring.md`: hardware assumptions and pin notes
 - `scripts/`
   - `bootstrap_pi.sh`: one-command Pi bootstrap for venv + service + first start
-  - `configure_pi_interfaces.sh`: enable I2C and free `/dev/serial0` from serial-console/getty conflicts
+  - `configure_pi_interfaces.sh`: enable hardware I2C, create sorter `/dev/i2c-3`, move `/dev/serial0` onto the stable UART, and free it from serial-console/getty conflicts
   - `setup_venv.sh`: create a fresh virtual environment and install Python deps
   - `install_service.sh`: install the `codenect4-web.service` systemd unit
   - `restart_web.sh`: restart and inspect the web service
@@ -50,6 +50,8 @@ bash deployment/scripts/show_urls.sh
 
 After the interface script runs, reboot the Pi before hardware testing so:
 - `/dev/i2c-1` comes up correctly for the PCA9685/TCS sensors
+- `/dev/i2c-3` comes up for the sorter TCS sensor on GPIO17/27
+- `/dev/serial0` maps to the stable PL011 UART (`ttyAMA0`)
 - `/dev/serial0` is no longer owned by the Linux serial console/getty
 
 If you also want the public Funnel URL back:
