@@ -1674,7 +1674,8 @@ class GameLoopWorker:
                 ret, frame = cap.read()
                 if not ret:
                     failed_reads += 1
-                    if failed_reads < 5:
+                    read_failure_threshold = 10 if tracker.is_board_active and not tracker.is_calibrated else 5
+                    if failed_reads < read_failure_threshold:
                         time.sleep(0.1)
                         continue
 
@@ -1685,7 +1686,11 @@ class GameLoopWorker:
                             "Check the USB camera connection and restart the game loop."
                         )
 
-                    self.controller._update_state(message=f"Camera read failed; reopening {camera_source}")
+                    self.controller._update_state(
+                        message=(
+                            f"Camera read failed {failed_reads} times; reopening {camera_source}"
+                        )
+                    )
                     cap.release()
                     reopened = reopen_camera(camera_source, self.width, self.height, attempts=12, delay_s=0.5)
                     if reopened is not None:
@@ -2036,6 +2041,8 @@ class GameLoopBeltFeeder:
                 raise TimeoutError(f"Timeout waiting for {targets}")
             line = arduino.readline().decode(errors="ignore").strip()
             line = "".join(ch for ch in line if ch.isprintable())
+            if line and line not in targets:
+                self.controller.log_event(f"Belt feeder serial RX: {line}")
             if line in targets:
                 return line
 
@@ -2053,19 +2060,21 @@ class GameLoopBeltFeeder:
         raise last_error
 
     def _sync_controller(self, arduino, attempts=6, timeout_s=1.5):
-        for _ in range(attempts):
+        for attempt in range(1, attempts + 1):
+            self.controller.log_event(f"Belt feeder PING attempt {attempt}/{attempts}")
             arduino.write(b"PING\n")
             try:
                 self._wait_for(arduino, {"PONG"}, timeout_s=timeout_s)
                 time.sleep(0.3)
                 arduino.reset_input_buffer()
+                self.controller.log_event("Belt feeder controller responded with PONG")
                 return
             except TimeoutError:
                 arduino.reset_input_buffer()
                 time.sleep(0.3)
         raise TimeoutError("Controller did not respond to PING")
 
-    def _open_controller_session(self, serial_module, session_attempts=4):
+    def _open_controller_session(self, serial_module, session_attempts=6):
         last_error = None
         for attempt in range(1, session_attempts + 1):
             arduino = None
@@ -2080,14 +2089,20 @@ class GameLoopBeltFeeder:
                         else f"Retrying belt feeder controller connection ({attempt}/{session_attempts})"
                     ),
                 )
+                self.controller.log_event(
+                    f"Opening belt feeder serial session on {self.PORT} (attempt {attempt}/{session_attempts})"
+                )
                 arduino = serial_module.Serial(self.PORT, 9600, timeout=1)
                 time.sleep(2)
                 arduino.reset_input_buffer()
                 arduino.reset_output_buffer()
-                self._sync_controller(arduino, attempts=8, timeout_s=1.5)
+                self._sync_controller(arduino, attempts=10, timeout_s=2.0)
                 return arduino
             except Exception as exc:
                 last_error = exc
+                self.controller.log_event(
+                    f"Belt feeder controller open failed on attempt {attempt}/{session_attempts}: {exc}"
+                )
                 if arduino is not None:
                     try:
                         arduino.close()

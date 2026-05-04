@@ -34,7 +34,7 @@ class Connect4Tracker:
         self.calibration_frames = 0
         self.is_calibrated = False
         self.baseline_colors = np.zeros((self.grid_rows, self.grid_cols, 3), dtype=np.uint8) # stores RGB of empty board
-        self.calibration_target_frames = 30
+        self.calibration_target_frames = 15
         self.red_fill_threshold = 0.10
         self.yellow_fill_threshold = 0.18
         self.red_min_dominance = 35
