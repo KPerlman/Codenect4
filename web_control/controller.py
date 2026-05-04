@@ -36,8 +36,10 @@ GATE_DEFAULT_ACCEL = 400
 GATE_DEFAULT_STEPS = 1000
 BELT_CLEAR_THRESH = 2500.0
 BELT_POST_DETECT_DELAY_MS = 500
-BELT_GAME_SPEED = 4000
-BELT_GAME_ACCEL = 400
+BELT_STAGE_SPEED = 500
+BELT_LAUNCH_SPEED = 4000
+BELT_LAUNCH_ACCEL = 400
+BELT_LAUNCH_STEPS = 1000
 BELT_DETECT_INTEGRATION_MS = 24
 BELT_DETECT_SAMPLES = 1
 BELT_DETECT_STREAK = 1
@@ -114,6 +116,9 @@ class SharedState:
     belt_speed: int = 600
     belt_accel: int = 400
     belt_steps: int | None = None
+    belt_launch_speed: int = BELT_LAUNCH_SPEED
+    belt_launch_accel: int = BELT_LAUNCH_ACCEL
+    belt_launch_steps: int = BELT_LAUNCH_STEPS
     belt_error: str | None = None
     belt_clear_thresh: float = BELT_CLEAR_THRESH
     belt_detect_mode: str = "below"
@@ -175,6 +180,9 @@ class SharedState:
             "belt_speed": self.belt_speed,
             "belt_accel": self.belt_accel,
             "belt_steps": self.belt_steps,
+            "belt_launch_speed": self.belt_launch_speed,
+            "belt_launch_accel": self.belt_launch_accel,
+            "belt_launch_steps": self.belt_launch_steps,
             "belt_error": self.belt_error,
             "belt_clear_thresh": self.belt_clear_thresh,
             "belt_detect_mode": self.belt_detect_mode,
@@ -354,6 +362,9 @@ class RobotWebController:
         speed=None,
         accel=None,
         steps=None,
+        launch_speed=None,
+        launch_accel=None,
+        launch_steps=None,
         clear_thresh=None,
         post_detect_delay_ms=None,
         detect_integration_ms=None,
@@ -367,6 +378,12 @@ class RobotWebController:
         if accel is not None:
             changes["belt_accel"] = int(accel)
         changes["belt_steps"] = None if steps is None else int(steps)
+        if launch_speed is not None:
+            changes["belt_launch_speed"] = int(launch_speed)
+        if launch_accel is not None:
+            changes["belt_launch_accel"] = int(launch_accel)
+        if launch_steps is not None:
+            changes["belt_launch_steps"] = max(1, int(launch_steps))
         if clear_thresh is not None:
             changes["belt_clear_thresh"] = float(clear_thresh)
         if post_detect_delay_ms is not None:
@@ -1192,11 +1209,13 @@ class GameLoopWorker:
         import serial
 
         state = self.controller.get_state()
-        speed = BELT_GAME_SPEED
-        accel = BELT_GAME_ACCEL
+        stage_speed = BELT_STAGE_SPEED
+        stage_accel = int(state["belt_accel"])
+        launch_speed = int(state["belt_launch_speed"])
+        launch_accel = int(state["belt_launch_accel"])
+        launch_steps = int(state["belt_launch_steps"])
         clear_thresh = float(state["belt_clear_thresh"])
         detect_mode = state["belt_detect_mode"]
-        post_detect_delay_ms = int(state["belt_post_detect_delay_ms"])
         detect_integration_ms = int(state["belt_detect_integration_ms"])
         detect_samples = int(state["belt_detect_samples"])
         detect_streak_target = int(state["belt_detect_streak"])
@@ -1204,15 +1223,16 @@ class GameLoopWorker:
         sensor = open_belt_tcs34725(integration_time_ms=detect_integration_ms, gain=4)
         detect_streak = 0
         deadline = time.time() + 12.0
+        stage_running = False
 
         self.controller._update_state(
             belt_running=True,
-            belt_status="running",
+            belt_status="staging",
             belt_mode="continuous",
-            belt_speed=speed,
-            belt_accel=accel,
+            belt_speed=stage_speed,
+            belt_accel=stage_accel,
             belt_error=None,
-            message="Feeding red piece with belt",
+            message="Checking for staged red piece at belt sensor",
         )
 
         with self.controller._arduino_lock:
@@ -1222,9 +1242,8 @@ class GameLoopWorker:
                 arduino.reset_input_buffer()
                 arduino.reset_output_buffer()
                 self._sync_serial_controller(arduino)
-                self._send_serial_cmd(arduino, f"SPEED {speed}", {"OK", "ERR"})
-                self._send_serial_cmd(arduino, f"ACCEL {accel}", {"OK", "ERR"})
-                self._send_serial_cmd(arduino, f"RUN {speed}", {"OK", "ERR"})
+                self._send_serial_cmd(arduino, f"SPEED {stage_speed}", {"OK", "ERR"})
+                self._send_serial_cmd(arduino, f"ACCEL {stage_accel}", {"OK", "ERR"})
 
                 while not self.stop_event.is_set():
                     for command in self._drain_commands():
@@ -1245,11 +1264,14 @@ class GameLoopWorker:
                             detect_streak = 0
                             self.controller._update_state(
                                 belt_running=True,
-                                belt_status="running",
+                                belt_status="staging",
                                 belt_mode="continuous",
-                                message="Resuming belt feed",
+                                belt_speed=stage_speed,
+                                belt_accel=stage_accel,
+                                message="Resuming belt staging",
                             )
-                            self._send_serial_cmd(arduino, f"RUN {speed}", {"OK", "ERR"})
+                            if stage_running:
+                                self._send_serial_cmd(arduino, f"RUN {stage_speed}", {"OK", "ERR"})
                     sample = self._read_belt_color_sample(
                         sensor,
                         count=detect_samples,
@@ -1266,34 +1288,63 @@ class GameLoopWorker:
                     else:
                         detect_streak = 0
 
+                    if not covered and not stage_running:
+                        self._send_serial_cmd(arduino, f"RUN {stage_speed}", {"OK", "ERR"})
+                        stage_running = True
+                        self.controller._update_state(
+                            belt_running=True,
+                            belt_status="staging",
+                            belt_mode="continuous",
+                            belt_speed=stage_speed,
+                            belt_accel=stage_accel,
+                            message="No staged red piece yet; feeding slowly toward the sensor",
+                        )
+
                     self.controller._update_state(
                         belt_running=True,
-                        belt_status="running",
+                        belt_status="staging",
                         belt_mode="continuous",
                         message=(
-                            f"Waiting for belt piece detect (clear={clear_value:.1f}, "
+                            f"Waiting for staged piece at belt sensor (clear={clear_value:.1f}, "
                             f"threshold={clear_thresh:.1f}, mode={detect_mode}, "
                             f"int={detect_integration_ms}ms, samples={detect_samples}, streak={detect_streak_target})"
                         ),
                     )
 
                     if detect_streak >= detect_streak_target:
+                        if stage_running:
+                            self._send_serial_cmd(arduino, "STOP", {"OK"}, timeout_s=2.0)
+                            stage_running = False
                         self.controller._update_state(
+                            belt_running=False,
+                            belt_status="ready",
+                            belt_mode="continuous",
                             message=(
-                                f"Belt detected a piece at clear={clear_value:.1f}. "
-                                f"Continuing for {post_detect_delay_ms} ms before stopping."
+                                f"Red piece staged at clear={clear_value:.1f}. Launching into column."
                             ),
                         )
-                        time.sleep(post_detect_delay_ms / 1000.0)
-                        self._send_serial_cmd(arduino, "STOP", {"OK"}, timeout_s=2.0)
+                        self._send_serial_cmd(arduino, f"SPEED {launch_speed}", {"OK", "ERR"})
+                        self._send_serial_cmd(arduino, f"ACCEL {launch_accel}", {"OK", "ERR"})
+                        self.controller._update_state(
+                            belt_running=True,
+                            belt_status="launching",
+                            belt_mode="steps",
+                            belt_speed=launch_speed,
+                            belt_accel=launch_accel,
+                            belt_steps=launch_steps,
+                            message=(
+                                f"Launching red piece at {launch_speed} speed, {launch_accel} accel, "
+                                f"{launch_steps} steps"
+                            ),
+                        )
+                        self._send_serial_cmd(arduino, f"STEPS {launch_steps}", {"DONE"}, timeout_s=12.0)
                         self.controller._update_state(
                             belt_running=False,
                             belt_status="completed",
-                            belt_mode="continuous",
+                            belt_mode="steps",
                             belt_error=None,
                             message=(
-                                f"Belt detected a piece at clear={clear_value:.1f} "
-                                f"and stopped {post_detect_delay_ms} ms later"
+                                f"Staged red piece launched {launch_steps} steps at speed {launch_speed}"
                             ),
                         )
                         return
