@@ -39,7 +39,7 @@ BELT_POST_DETECT_DELAY_MS = 500
 BELT_STAGE_SPEED = 500
 BELT_LAUNCH_SPEED = 4000
 BELT_LAUNCH_ACCEL = 400
-BELT_LAUNCH_STEPS = 1500
+BELT_LAUNCH_STEPS = 2000
 BELT_DETECT_INTEGRATION_MS = 12
 BELT_DETECT_SAMPLES = 1
 BELT_DETECT_STREAK = 1
@@ -1932,6 +1932,23 @@ class GameLoopBeltFeeder:
                 time.sleep(0.8)
         raise RuntimeError(f"Unable to connect belt feeder controller: {last_error}")
 
+    def _reconnect_controller_session(self, serial_module, arduino, accel, restart_stage):
+        if arduino is not None:
+            try:
+                arduino.close()
+            except Exception:
+                pass
+        self.controller._update_state(
+            belt_running=False,
+            belt_status="recovering",
+            belt_error=None,
+            message="Reconnecting belt feeder controller after a missed serial acknowledgement",
+        )
+        new_arduino = self._open_controller_session(serial_module)
+        if restart_stage:
+            self._start_staging_run(new_arduino, int(accel))
+        return new_arduino
+
     def _start_staging_run(self, arduino, accel):
         self._send_and_wait(arduino, f"SPEED {BELT_STAGE_SPEED}", {"OK", "ERR"}, attempts=6)
         self._send_and_wait(arduino, f"ACCEL {int(accel)}", {"OK", "ERR"}, attempts=6)
@@ -1983,8 +2000,17 @@ class GameLoopBeltFeeder:
                         if command_type == "pause":
                             self._paused = True
                             if stage_running:
-                                self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0, attempts=1)
-                                stage_running = False
+                                try:
+                                    self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0, attempts=2)
+                                    stage_running = False
+                                except TimeoutError:
+                                    arduino = self._reconnect_controller_session(
+                                        serial,
+                                        arduino,
+                                        self.controller.get_state()["belt_accel"],
+                                        restart_stage=False,
+                                    )
+                                    stage_running = False
                             self.controller._update_state(
                                 belt_running=False,
                                 belt_status="paused",
@@ -2014,7 +2040,15 @@ class GameLoopBeltFeeder:
                                 message="Rejected staged belt piece; resuming slow feed",
                             )
                             if not stage_running:
-                                self._start_staging_run(arduino, int(self.controller.get_state()["belt_accel"]))
+                                try:
+                                    self._start_staging_run(arduino, int(self.controller.get_state()["belt_accel"]))
+                                except TimeoutError:
+                                    arduino = self._reconnect_controller_session(
+                                        serial,
+                                        arduino,
+                                        self.controller.get_state()["belt_accel"],
+                                        restart_stage=True,
+                                    )
                                 stage_running = True
 
                     if self.stop_event.is_set() or self.parent_stop_event.is_set():
@@ -2044,8 +2078,18 @@ class GameLoopBeltFeeder:
                         launch_speed = int(pending_launch["launch_speed"])
                         launch_accel = int(pending_launch["launch_accel"])
                         launch_steps = int(pending_launch["launch_steps"])
-                        self._send_and_wait(arduino, f"SPEED {launch_speed}", {"OK", "ERR"})
-                        self._send_and_wait(arduino, f"ACCEL {launch_accel}", {"OK", "ERR"})
+                        try:
+                            self._send_and_wait(arduino, f"SPEED {launch_speed}", {"OK", "ERR"})
+                            self._send_and_wait(arduino, f"ACCEL {launch_accel}", {"OK", "ERR"})
+                        except TimeoutError:
+                            arduino = self._reconnect_controller_session(
+                                serial,
+                                arduino,
+                                launch_accel,
+                                restart_stage=False,
+                            )
+                            self._send_and_wait(arduino, f"SPEED {launch_speed}", {"OK", "ERR"})
+                            self._send_and_wait(arduino, f"ACCEL {launch_accel}", {"OK", "ERR"})
                         self.controller._update_state(
                             belt_running=True,
                             belt_status="launching",
@@ -2060,7 +2104,16 @@ class GameLoopBeltFeeder:
                                 f"{launch_steps} steps"
                             ),
                         )
-                        self._send_and_wait(arduino, f"RUNSTEPS {launch_steps}", {"DONE"}, timeout_s=12.0)
+                        try:
+                            self._send_and_wait(arduino, f"RUNSTEPS {launch_steps}", {"DONE"}, timeout_s=12.0)
+                        except TimeoutError:
+                            arduino = self._reconnect_controller_session(
+                                serial,
+                                arduino,
+                                self.controller.get_state()["belt_accel"],
+                                restart_stage=False,
+                            )
+                            raise RuntimeError("Launch command lost contact with the controller; restage the red piece and try again.")
                         self.controller._update_state(
                             belt_running=False,
                             belt_status="completed",
@@ -2104,8 +2157,17 @@ class GameLoopBeltFeeder:
 
                     if detect_streak >= detect_streak_target:
                         if stage_running:
-                            self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0, attempts=1)
-                            stage_running = False
+                            try:
+                                self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0, attempts=2)
+                                stage_running = False
+                            except TimeoutError:
+                                arduino = self._reconnect_controller_session(
+                                    serial,
+                                    arduino,
+                                    state["belt_accel"],
+                                    restart_stage=False,
+                                )
+                                stage_running = False
                         piece_staged = True
                         self._ready_confirmed = False
                         self.controller._update_state(
@@ -2116,7 +2178,15 @@ class GameLoopBeltFeeder:
                         continue
 
                     if not stage_running:
-                        self._start_staging_run(arduino, int(state["belt_accel"]))
+                        try:
+                            self._start_staging_run(arduino, int(state["belt_accel"]))
+                        except TimeoutError:
+                            arduino = self._reconnect_controller_session(
+                                serial,
+                                arduino,
+                                state["belt_accel"],
+                                restart_stage=True,
+                            )
                         stage_running = True
                     else:
                         self.controller._update_state(
