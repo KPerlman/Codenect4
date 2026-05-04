@@ -2351,9 +2351,25 @@ class GameLoopBeltFeeder:
                                 stage_running = False
                         piece_staged = True
                         self._ready_confirmed = False
+                        self.controller.log_event(
+                            "Belt sensor staged piece: "
+                            f"clear={clear_value:.1f}, threshold={clear_thresh:.1f}, "
+                            f"mode={detect_mode}, streak={detect_streak}/{detect_streak_target}"
+                        )
                         self.controller._update_state(
+                            belt_running=False,
+                            belt_status="ready",
+                            belt_mode="continuous",
+                            belt_speed=BELT_STAGE_SPEED,
+                            belt_accel=int(state["belt_accel"]),
                             belt_piece_ready=True,
                             belt_ready_confirmed=False,
+                            belt_error=None,
+                            message=(
+                                "Launch waiting for staged-piece confirmation."
+                                if pending_launch is not None
+                                else "Red piece staged at sensor. Confirm it or reject it as a false positive."
+                            ),
                         )
                         time.sleep(0.02)
                         continue
@@ -2361,6 +2377,9 @@ class GameLoopBeltFeeder:
                     if not stage_running:
                         try:
                             self._start_staging_run(arduino, int(state["belt_accel"]))
+                            self.controller.log_event(
+                                f"Belt staging run started at speed {BELT_STAGE_SPEED} accel {int(state['belt_accel'])}"
+                            )
                         except TimeoutError:
                             arduino = self._reconnect_controller_session(
                                 serial,
