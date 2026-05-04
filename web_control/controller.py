@@ -877,12 +877,24 @@ class RobotWebController:
             if not self._state.board_setup_mode:
                 return self._state.to_dict()
             board = np.asarray(self._state.confirmed_board, dtype=int)
-            if row < 0 or row >= board.shape[0] or column < 0 or column >= board.shape[1]:
+            internal_column = internal_column_from_user(board, column)
+            if (
+                row < 0
+                or row >= board.shape[0]
+                or internal_column < 0
+                or internal_column >= board.shape[1]
+            ):
                 return self._state.to_dict()
-            current = int(board[row, column])
-            board[row, column] = 2 if current == 0 else 1 if current == 2 else 0
+            current = int(board[row, internal_column])
+            board[row, internal_column] = 2 if current == 0 else 1 if current == 2 else 0
             self._pending_start_board = np.copy(board)
-            label = "empty" if board[row, column] == 0 else "yellow" if board[row, column] == 2 else "red"
+            label = (
+                "empty"
+                if board[row, internal_column] == 0
+                else "yellow"
+                if board[row, internal_column] == 2
+                else "red"
+            )
             self._set_setup_board_state(
                 board,
                 message=f"Set row {row}, column {column} to {label}",
@@ -1326,12 +1338,25 @@ class GameLoopWorker:
         return None
 
     def _sanitize_robot_turn_board(self, confirmed_board, observed_board):
-        sanitized = np.copy(observed_board)
         confirmed = np.asarray(confirmed_board)
-        # Never let new yellow pieces appear during the robot turn.
-        sanitized[(confirmed != 2) & (sanitized == 2)] = 0
-        # Preserve any already-confirmed yellow cells.
-        sanitized[confirmed == 2] = 2
+        sanitized = np.copy(confirmed)
+        legal_red, _ = legal_ai_transition(confirmed, observed_board)
+        if legal_red:
+            added = find_single_added_piece(confirmed, observed_board, 1)
+            if added is not None:
+                row, col = added
+                sanitized[row, col] = 1
+        return sanitized
+
+    def _sanitize_human_turn_board(self, confirmed_board, observed_board):
+        confirmed = np.asarray(confirmed_board)
+        sanitized = np.copy(confirmed)
+        legal_yellow, _ = legal_human_transition(confirmed, observed_board)
+        if legal_yellow:
+            added = find_single_added_piece(confirmed, observed_board, 2)
+            if added is not None:
+                row, col = added
+                sanitized[row, col] = 2
         return sanitized
 
     def _sync_tracker_board(self, tracker, board_state):
@@ -2049,10 +2074,20 @@ class GameLoopWorker:
                 display_board_copy = np.copy(board_copy)
                 if confirmed_board is not None:
                     state_view = self.controller.get_state()
+                    awaiting = state_view["awaiting_confirmation"]
+                    turn_state = str(state_view["turn_state"])
                     if (
+                        awaiting == "yellow"
+                        or current_turn == "yellow"
+                        or turn_state.startswith("human_")
+                        or state_view["game_status"] == "waiting_human_move"
+                    ):
+                        display_board_copy = self._sanitize_human_turn_board(confirmed_board, board_copy)
+                    elif (
                         state_view["game_status"] == "thinking"
-                        or state_view["awaiting_confirmation"] == "red"
-                        or str(state_view["turn_state"]).startswith("robot_")
+                        or awaiting == "red"
+                        or current_turn == "red"
+                        or turn_state.startswith("robot_")
                     ):
                         display_board_copy = self._sanitize_robot_turn_board(confirmed_board, board_copy)
 
