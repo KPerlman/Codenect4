@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04l"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04m"
 
 
 class StartGameRequest(BaseModel):
@@ -35,6 +35,25 @@ class ManualHumanMoveRequest(BaseModel):
 class RemovePieceRequest(BaseModel):
     row: int
     column: int
+
+
+class SetupTurnRequest(BaseModel):
+    turn: str = "yellow"
+
+
+class SetupPieceRequest(BaseModel):
+    row: int
+    column: int
+
+
+class StartInProgressGameRequest(BaseModel):
+    camera: int | None = None
+    device: str | None = None
+    width: int = 640
+    height: int = 480
+    depth: int = 5
+    state_streak: int = 3
+    turn: str = "yellow"
 
 
 class BeltStartRequest(BaseModel):
@@ -101,6 +120,39 @@ def api_start_game(request: StartGameRequest):
         depth=request.depth,
         state_streak=request.state_streak,
     )
+
+
+@app.post("/api/game/start-in-progress-setup")
+def api_start_in_progress_setup(request: SetupTurnRequest):
+    return controller.begin_in_progress_setup(turn=request.turn)
+
+
+@app.post("/api/game/start-in-progress")
+def api_start_in_progress_game(request: StartInProgressGameRequest):
+    return controller.start_game_from_setup(
+        camera=request.camera,
+        device=request.device,
+        width=request.width,
+        height=request.height,
+        depth=request.depth,
+        state_streak=request.state_streak,
+        turn=request.turn,
+    )
+
+
+@app.post("/api/game/setup-turn")
+def api_set_in_progress_turn(request: SetupTurnRequest):
+    return controller.set_in_progress_turn(turn=request.turn)
+
+
+@app.post("/api/game/setup-piece")
+def api_setup_piece(request: SetupPieceRequest):
+    return controller.cycle_in_progress_piece(request.row, request.column)
+
+
+@app.post("/api/game/setup-cancel")
+def api_cancel_in_progress_setup():
+    return controller.cancel_in_progress_setup()
 
 
 @app.post("/api/game/stop")
@@ -684,8 +736,24 @@ PAGE_HTML = """
           <div class="section-title">Game Controls</div>
           <div class="controls">
             <button id="primaryGameButton" onclick="handlePrimaryGameAction()">Start Game</button>
+            <button id="inProgressSetupButton" class="warning" onclick="startInProgressSetup()">Start In-Progress Game</button>
             <button class="warning" onclick="resetGame()">Reset Game</button>
             <button class="secondary" onclick="copyRuntimeLog()">Copy Log</button>
+          </div>
+          <div id="inProgressSetupControls" class="confirm-panel hidden spaced-top">
+            <div class="confirm-title">Set up existing board</div>
+            <div class="confirm-copy">Choose whose turn it is, then click the board to cycle each slot: empty -> yellow -> red -> empty.</div>
+            <div class="controls">
+              <label for="inProgressTurnSelect">Turn</label>
+              <select id="inProgressTurnSelect" onchange="updateInProgressTurn()">
+                <option value="yellow">Yellow to move</option>
+                <option value="red">Red to move</option>
+              </select>
+            </div>
+            <div class="controls">
+              <button class="ok" onclick="confirmInProgressStart()">Confirm & Start</button>
+              <button class="secondary" onclick="cancelInProgressSetup()">Cancel</button>
+            </div>
           </div>
           <div id="beltReadyControls" class="controls hidden spaced-top">
             <button id="beltReadyConfirmButton" class="ok" onclick="confirmBeltReady(true)">Confirm Ready</button>
@@ -945,6 +1013,42 @@ PAGE_HTML = """
       await refresh();
     }
 
+    async function startInProgressSetup() {
+      await api("/api/game/start-in-progress-setup", "POST", {
+        turn: (document.getElementById("inProgressTurnSelect") || {}).value || "yellow"
+      });
+      await refresh();
+    }
+
+    async function updateInProgressTurn() {
+      const select = document.getElementById("inProgressTurnSelect");
+      await api("/api/game/setup-turn", "POST", { turn: select ? select.value : "yellow" });
+      await refresh();
+    }
+
+    async function confirmInProgressStart() {
+      await syncBeltSettings();
+      const select = document.getElementById("inProgressTurnSelect");
+      await api("/api/game/start-in-progress", "POST", {
+        width: 640,
+        height: 480,
+        depth: 5,
+        state_streak: 3,
+        turn: select ? select.value : "yellow",
+      });
+      await refresh();
+    }
+
+    async function cancelInProgressSetup() {
+      await api("/api/game/setup-cancel", "POST");
+      await refresh();
+    }
+
+    async function cycleSetupPiece(row, column) {
+      await api("/api/game/setup-piece", "POST", { row, column });
+      await refresh();
+    }
+
     async function handlePrimaryGameAction() {
       if (latestState && latestState.game_running && latestState.game_status !== "finished" && latestState.game_status !== "error") {
         await togglePauseGame();
@@ -1168,6 +1272,10 @@ PAGE_HTML = """
 
     async function handleBoardClick(visibleColumn, row, isPendingCell, isConfirmedOccupied) {
       if (!latestState) return;
+      if (latestState.board_setup_mode) {
+        await cycleSetupPiece(row, visibleColumn);
+        return;
+      }
       if (
         latestState.game_status === "waiting_human_move" ||
         latestState.turn_state === "human_turn"
@@ -1243,41 +1351,47 @@ PAGE_HTML = """
             confirmedBoard[rowIdx][originalCol] !== 0 &&
             !isPending
           );
-          if (isPending) {
-            slot.classList.remove("yellow");
-            slot.classList.add("pending-yellow");
-          }
-          if (
+          if (latestState && latestState.board_setup_mode) {
+            slot.classList.add("clickable");
+            slot.title = `Cycle setup slot at row ${rowIdx}, column ${originalCol}`;
+            slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, false, false));
+          } else {
+            if (isPending) {
+              slot.classList.remove("yellow");
+              slot.classList.add("pending-yellow");
+            }
+            if (
             latestState &&
             (latestState.game_status === "waiting_human_move" ||
               latestState.turn_state === "human_turn")
-          ) {
-            slot.classList.add("clickable", "manual-yellow");
-            slot.title = isConfirmedOccupied
-              ? `Remove confirmed piece at row ${rowIdx}, column ${originalCol}`
-              : `Register yellow in column ${originalCol}`;
-            slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, false, isConfirmedOccupied));
-          } else if (latestState && latestState.awaiting_confirmation === "yellow") {
-            slot.classList.add("clickable");
-            slot.title = isPending
-              ? `Confirm detected yellow in column ${originalCol}`
-              : isConfirmedOccupied
+            ) {
+              slot.classList.add("clickable", "manual-yellow");
+              slot.title = isConfirmedOccupied
                 ? `Remove confirmed piece at row ${rowIdx}, column ${originalCol}`
-                : `Override to column ${originalCol}`;
-            slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, isPending, isConfirmedOccupied));
-          } else if (
-            latestState &&
-            latestState.awaiting_confirmation === "red" &&
-            latestState.suggested_red_column !== null &&
-            originalCol === latestState.suggested_red_column
-          ) {
-            slot.classList.add("clickable");
-            slot.title = `Confirm red placement in column ${originalCol}`;
-            slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, false, false));
-          } else if (isConfirmedOccupied) {
-            slot.classList.add("clickable");
-            slot.title = `Remove confirmed piece at row ${rowIdx}, column ${originalCol}`;
-            slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, false, true));
+                : `Register yellow in column ${originalCol}`;
+              slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, false, isConfirmedOccupied));
+            } else if (latestState && latestState.awaiting_confirmation === "yellow") {
+              slot.classList.add("clickable");
+              slot.title = isPending
+                ? `Confirm detected yellow in column ${originalCol}`
+                : isConfirmedOccupied
+                  ? `Remove confirmed piece at row ${rowIdx}, column ${originalCol}`
+                  : `Override to column ${originalCol}`;
+              slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, isPending, isConfirmedOccupied));
+            } else if (
+              latestState &&
+              latestState.awaiting_confirmation === "red" &&
+              latestState.suggested_red_column !== null &&
+              originalCol === latestState.suggested_red_column
+            ) {
+              slot.classList.add("clickable");
+              slot.title = `Confirm red placement in column ${originalCol}`;
+              slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, false, false));
+            } else if (isConfirmedOccupied) {
+              slot.classList.add("clickable");
+              slot.title = `Remove confirmed piece at row ${rowIdx}, column ${originalCol}`;
+              slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, false, true));
+            }
           }
           root.appendChild(slot);
         }
@@ -1340,6 +1454,13 @@ PAGE_HTML = """
           className: "banner",
           title: "Calibrating board",
           text: "Keep the board visible and empty for a moment.",
+        };
+      }
+      if (state.board_setup_mode) {
+        return {
+          className: "banner waiting",
+          title: "Set up in-progress board",
+          text: state.prompt || "Choose the turn, click the board to set pieces, then confirm to start.",
         };
       }
       if (state.game_status === "starting") {
@@ -1633,6 +1754,9 @@ PAGE_HTML = """
 
     function renderGameControls(state) {
       const primaryButton = document.getElementById("primaryGameButton");
+      const inProgressButton = document.getElementById("inProgressSetupButton");
+      const inProgressControls = document.getElementById("inProgressSetupControls");
+      const inProgressTurnSelect = document.getElementById("inProgressTurnSelect");
       const readyControls = document.getElementById("beltReadyControls");
       const readyConfirmButton = document.getElementById("beltReadyConfirmButton");
       const readyRejectButton = document.getElementById("beltReadyRejectButton");
@@ -1652,6 +1776,16 @@ PAGE_HTML = """
         primaryButton.className = "ok";
       }
       primaryButton.disabled = state.game_status === "starting";
+      if (inProgressButton) {
+        inProgressButton.disabled = !!state.game_running;
+        inProgressButton.textContent = state.board_setup_mode ? "Editing In-Progress Board" : "Start In-Progress Game";
+      }
+      if (inProgressControls) {
+        inProgressControls.classList.toggle("hidden", !state.board_setup_mode);
+      }
+      if (inProgressTurnSelect && document.activeElement !== inProgressTurnSelect) {
+        inProgressTurnSelect.value = state.board_setup_turn || "yellow";
+      }
 
       const launchControlsActive = (
         state.game_running &&

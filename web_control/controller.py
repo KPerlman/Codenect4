@@ -91,6 +91,8 @@ class SharedState:
     sorter_running: bool = False
     current_board: list[list[int]] = field(default_factory=lambda: [[0] * 7 for _ in range(6)])
     confirmed_board: list[list[int]] = field(default_factory=lambda: [[0] * 7 for _ in range(6)])
+    board_setup_mode: bool = False
+    board_setup_turn: str = "yellow"
     suggested_red_column: int | None = None
     detected_yellow_column: int | None = None
     confirmed_red_count: int = 0
@@ -160,6 +162,8 @@ class SharedState:
             "sorter_running": self.sorter_running,
             "current_board": self.current_board,
             "confirmed_board": self.confirmed_board,
+            "board_setup_mode": self.board_setup_mode,
+            "board_setup_turn": self.board_setup_turn,
             "suggested_red_column": self.suggested_red_column,
             "detected_yellow_column": self.detected_yellow_column,
             "confirmed_red_count": self.confirmed_red_count,
@@ -240,6 +244,8 @@ class RobotWebController:
         self._gate_thread = None
         self._gate_stop_event = None
         self._gate_is_out = False
+        self._pending_start_board = None
+        self._pending_start_turn = "yellow"
         self._append_log_locked("Runtime controller initialized")
 
     def _append_log_locked(self, text):
@@ -259,6 +265,8 @@ class RobotWebController:
             "game_status": "Game status",
             "game_phase": "Game phase",
             "turn_state": "Turn state",
+            "board_setup_mode": "Board setup mode",
+            "board_setup_turn": "Board setup turn",
             "awaiting_confirmation": "Awaiting confirmation",
             "tracker_active": "Tracker active",
             "tracker_calibrated": "Tracker calibrated",
@@ -694,13 +702,123 @@ class RobotWebController:
             self._log_state_changes_locked(previous_values, changes)
             self._state.updated_at = time.time()
 
-    def start_game(self, camera=None, device=None, width=640, height=480, depth=5, state_streak=3):
+    def _normalized_setup_turn(self, turn):
+        return "red" if str(turn).lower() == "red" else "yellow"
+
+    def _gravity_valid(self, board):
+        board_arr = np.asarray(board, dtype=int)
+        for col in range(board_arr.shape[1]):
+            found_empty = False
+            for row in range(board_arr.shape[0] - 1, -1, -1):
+                if board_arr[row, col] == 0:
+                    found_empty = True
+                elif found_empty:
+                    return False
+        return True
+
+    def _set_setup_board_state(self, board, message=None, **extra_changes):
+        board_arr = np.asarray(board, dtype=int)
+        board_list = board_arr.tolist()
+        changes = {
+            "current_board": board_list,
+            "confirmed_board": board_list,
+            "confirmed_red_count": int(np.count_nonzero(board_arr == 1)),
+            "confirmed_yellow_count": int(np.count_nonzero(board_arr == 2)),
+            "pending_yellow_count": 0,
+            "winner": board_winner(board_arr),
+        }
+        if message is not None:
+            changes["message"] = message
+        changes.update(extra_changes)
+        self._update_state(**changes)
+
+    def begin_in_progress_setup(self, turn="yellow"):
+        with self._lock:
+            if self._game_thread and self._game_thread.is_alive():
+                self._update_state(message="Stop or finish the current game before setting up an in-progress board")
+                return self._state.to_dict()
+            normalized_turn = self._normalized_setup_turn(turn)
+            empty_board = np.zeros((6, 7), dtype=int)
+            self._pending_start_board = empty_board
+            self._pending_start_turn = normalized_turn
+            self._set_setup_board_state(
+                empty_board,
+                message="Board setup mode active. Click slots to cycle empty -> yellow -> red -> empty.",
+                game_status="setup",
+                game_phase="setup",
+                turn_state="setup_board",
+                awaiting_confirmation=None,
+                prompt="Choose whose turn it is, mark the board state, then confirm to start from that position.",
+                error=None,
+                tracker_active=False,
+                tracker_calibrated=False,
+                camera_source=None,
+                detected_yellow_column=None,
+                suggested_red_column=None,
+                board_setup_mode=True,
+                board_setup_turn=normalized_turn,
+            )
+            return self._state.to_dict()
+
+    def set_in_progress_turn(self, turn="yellow"):
+        normalized_turn = self._normalized_setup_turn(turn)
+        with self._lock:
+            if not self._state.board_setup_mode:
+                return self._state.to_dict()
+            self._pending_start_turn = normalized_turn
+            self._update_state(
+                board_setup_turn=normalized_turn,
+                message=f"Board setup turn set to {normalized_turn}",
+            )
+            return self._state.to_dict()
+
+    def cycle_in_progress_piece(self, row, column):
+        with self._lock:
+            if not self._state.board_setup_mode:
+                return self._state.to_dict()
+            board = np.asarray(self._state.confirmed_board, dtype=int)
+            if row < 0 or row >= board.shape[0] or column < 0 or column >= board.shape[1]:
+                return self._state.to_dict()
+            current = int(board[row, column])
+            board[row, column] = 2 if current == 0 else 1 if current == 2 else 0
+            self._pending_start_board = np.copy(board)
+            label = "empty" if board[row, column] == 0 else "yellow" if board[row, column] == 2 else "red"
+            self._set_setup_board_state(
+                board,
+                message=f"Set row {row}, column {column} to {label}",
+                board_setup_mode=True,
+                board_setup_turn=self._state.board_setup_turn,
+                game_status="setup",
+                game_phase="setup",
+                turn_state="setup_board",
+            )
+            return self._state.to_dict()
+
+    def cancel_in_progress_setup(self):
+        with self._lock:
+            if not self._state.board_setup_mode:
+                return self._state.to_dict()
+            self._pending_start_board = None
+            self._pending_start_turn = "yellow"
+            self._update_state(
+                board_setup_mode=False,
+                board_setup_turn="yellow",
+                game_status="idle",
+                game_phase="idle",
+                turn_state="idle",
+                prompt=None,
+                message="Cancelled in-progress board setup",
+            )
+            return self._state.to_dict()
+
+    def start_game(self, camera=None, device=None, width=640, height=480, depth=5, state_streak=3, initial_board=None, initial_turn="yellow"):
         with self._lock:
             if self._belt_test_thread and self._belt_test_thread.is_alive():
                 self._update_state(message="Stop belt calibration test before starting the game")
                 return self._state.to_dict()
             if self._game_thread and self._game_thread.is_alive():
                 return self._state.to_dict()
+            normalized_turn = self._normalized_setup_turn(initial_turn)
             self._game_stop_event = threading.Event()
             self._game_commands = queue.Queue()
             worker = GameLoopWorker(
@@ -713,17 +831,48 @@ class RobotWebController:
                 height=height,
                 depth=depth,
                 state_streak=state_streak,
+                initial_board=initial_board,
+                initial_turn=normalized_turn,
             )
             self._game_thread = threading.Thread(target=worker.run, daemon=True, name="game-loop-worker")
             self._game_thread.start()
+            self._pending_start_board = None
+            self._pending_start_turn = "yellow"
             self._update_state(
                 game_running=True,
                 game_paused=False,
                 game_status="starting",
+                board_setup_mode=False,
+                board_setup_turn=normalized_turn,
                 message="Starting game loop",
                 error=None,
             )
             return self._state.to_dict()
+
+    def start_game_from_setup(self, camera=None, device=None, width=640, height=480, depth=5, state_streak=3, turn="yellow"):
+        with self._lock:
+            if not self._state.board_setup_mode:
+                self._update_state(message="Start in-progress setup first")
+                return self._state.to_dict()
+            board = np.asarray(self._state.confirmed_board, dtype=int)
+            if not self._gravity_valid(board):
+                self._update_state(
+                    message="Board setup has floating pieces. Fill each column from the bottom up before starting.",
+                    error="In-progress board is not gravity-valid",
+                )
+                return self._state.to_dict()
+            normalized_turn = self._normalized_setup_turn(turn or self._state.board_setup_turn)
+            initial_board = np.copy(board)
+        return self.start_game(
+            camera=camera,
+            device=device,
+            width=width,
+            height=height,
+            depth=depth,
+            state_streak=state_streak,
+            initial_board=initial_board,
+            initial_turn=normalized_turn,
+        )
 
     def toggle_pause_game(self):
         with self._lock:
@@ -797,6 +946,8 @@ class RobotWebController:
             game_status="idle",
             game_phase="idle",
             turn_state="idle",
+            board_setup_mode=False,
+            board_setup_turn="yellow",
             awaiting_confirmation=None,
             prompt=None,
             error=None,
@@ -989,7 +1140,7 @@ class RobotWebController:
 
 
 class GameLoopWorker:
-    def __init__(self, controller, stop_event, commands, camera, device, width, height, depth, state_streak):
+    def __init__(self, controller, stop_event, commands, camera, device, width, height, depth, state_streak, initial_board=None, initial_turn="yellow"):
         self.controller = controller
         self.stop_event = stop_event
         self.commands = commands
@@ -999,6 +1150,8 @@ class GameLoopWorker:
         self.height = height
         self.depth = depth
         self.state_streak = state_streak
+        self.initial_board = None if initial_board is None else np.asarray(initial_board, dtype=int)
+        self.initial_turn = "red" if str(initial_turn).lower() == "red" else "yellow"
         self._deferred_commands = []
         self._belt_feeder = None
 
@@ -1626,6 +1779,7 @@ class GameLoopWorker:
         recovery_cycles = 0
         active_drop_servo_channel = None
         confirmed_board = None
+        current_turn = self.initial_turn
         last_seen_board = None
         stable_streak = 0
         stable_board = None
@@ -1796,7 +1950,14 @@ class GameLoopWorker:
                     continue
 
                 if confirmed_board is None:
-                    confirmed_board = np.copy(stable_board)
+                    if self.initial_board is not None:
+                        confirmed_board = np.copy(self.initial_board)
+                        stable_board = np.copy(confirmed_board)
+                        last_seen_board = np.copy(confirmed_board)
+                        stable_streak = self.state_streak
+                        self.initial_board = None
+                    else:
+                        confirmed_board = np.copy(stable_board)
                     self.confirmed_board = confirmed_board
                     self._sync_tracker_board(tracker, confirmed_board)
                     if bool(self.controller.get_state()["game_belt_enabled"]):
@@ -1804,108 +1965,124 @@ class GameLoopWorker:
                             timeout_s=30.0,
                             context_message="Preparing belt feeder for slow staging",
                         )
-                    self.controller._update_state(
-                        game_status="waiting_human_move",
-                        game_phase="live",
-                        turn_state="human_turn",
-                        awaiting_confirmation=None,
-                        prompt="Drop a YELLOW piece, or enter its column in the app.",
-                        message="Waiting for YELLOW move",
-                    )
+                    if current_turn == "yellow":
+                        self.controller._update_state(
+                            game_status="waiting_human_move",
+                            game_phase="live",
+                            turn_state="human_turn",
+                            awaiting_confirmation=None,
+                            prompt="Drop a YELLOW piece, or enter its column in the app.",
+                            message=(
+                                "Loaded in-progress board. Waiting for YELLOW move"
+                                if stable_streak == self.state_streak and last_seen_board is not None
+                                else "Waiting for YELLOW move"
+                            ),
+                        )
+                    else:
+                        self.controller._update_state(
+                            game_status="thinking",
+                            game_phase="live",
+                            turn_state="robot_thinking",
+                            awaiting_confirmation=None,
+                            prompt="Thinking about RED placement...",
+                            message="Loaded in-progress board. Thinking",
+                        )
                     self._sync_belt_feeder_mode()
                     continue
 
                 self.confirmed_board = confirmed_board
 
-                manual_applied = False
-                for command in self._drain_commands():
-                    runtime_result = self._maybe_handle_runtime_command(command)
-                    runtime_result = self._maybe_handle_runtime_command(
-                        command,
-                        on_pause=self._pause_runtime_subsystems,
-                    )
-                    if runtime_result == "stop":
-                        self.stop_event.set()
-                        break
-                    if runtime_result == "resume":
-                        self._resume_runtime_subsystems()
-                        continue
-                    if command["type"] == "manual_human_move":
-                        manual_board = self._handle_manual_move(confirmed_board, command["column"])
-                        if manual_board is not None:
-                            confirmed_board = manual_board
-                            self.confirmed_board = confirmed_board
-                            self._sync_tracker_board(tracker, confirmed_board)
-                            stable_board = np.copy(confirmed_board)
-                            last_seen_board = np.copy(confirmed_board)
-                            stable_streak = self.state_streak
-                            manual_applied = True
-                            self.controller._update_state(
-                                game_phase="live",
-                                turn_state="human_move_registered",
-                                message=f"Manual YELLOW move recorded in column {command['column']}",
-                            )
-                            break
-                    elif command["type"] == "remove_piece":
-                        corrected_board = self._remove_piece_from_board(
-                            confirmed_board,
-                            command["row"],
-                            command["column"],
+                if current_turn == "yellow":
+                    manual_applied = False
+                    for command in self._drain_commands():
+                        runtime_result = self._maybe_handle_runtime_command(command)
+                        runtime_result = self._maybe_handle_runtime_command(
+                            command,
+                            on_pause=self._pause_runtime_subsystems,
                         )
-                        if corrected_board is not None:
-                            confirmed_board = corrected_board
-                            self.confirmed_board = confirmed_board
-                            self._sync_tracker_board(tracker, confirmed_board)
-                            stable_board = np.copy(confirmed_board)
-                            last_seen_board = np.copy(confirmed_board)
-                            stable_streak = self.state_streak
-                            manual_applied = True
-                            self.controller._update_state(
-                                game_phase="live",
-                                turn_state="board_corrected",
-                                message=(
-                                    f"Removed confirmed piece at row {command['row']}, "
-                                    f"column {command['column']}"
-                                ),
-                            )
+                        if runtime_result == "stop":
+                            self.stop_event.set()
                             break
-                if self.stop_event.is_set():
-                    break
-
-                if manual_applied:
-                    pass
-                else:
-                    is_legal, _ = legal_human_transition(confirmed_board, stable_board)
-                    if not is_legal:
-                        continue
-                    added = find_single_added_piece(confirmed_board, stable_board, 2)
-                    if added is None:
-                        continue
-                    _, internal_col = added
-                    visible_col = user_visible_column(stable_board, internal_col)
-                    maybe_board = self._await_yellow_confirmation(stable_board, visible_col)
-                    if maybe_board is None:
+                        if runtime_result == "resume":
+                            self._resume_runtime_subsystems()
+                            continue
+                        if command["type"] == "manual_human_move":
+                            manual_board = self._handle_manual_move(confirmed_board, command["column"])
+                            if manual_board is not None:
+                                confirmed_board = manual_board
+                                self.confirmed_board = confirmed_board
+                                self._sync_tracker_board(tracker, confirmed_board)
+                                stable_board = np.copy(confirmed_board)
+                                last_seen_board = np.copy(confirmed_board)
+                                stable_streak = self.state_streak
+                                manual_applied = True
+                                self.controller._update_state(
+                                    game_phase="live",
+                                    turn_state="human_move_registered",
+                                    message=f"Manual YELLOW move recorded in column {command['column']}",
+                                )
+                                break
+                        elif command["type"] == "remove_piece":
+                            corrected_board = self._remove_piece_from_board(
+                                confirmed_board,
+                                command["row"],
+                                command["column"],
+                            )
+                            if corrected_board is not None:
+                                confirmed_board = corrected_board
+                                self.confirmed_board = confirmed_board
+                                self._sync_tracker_board(tracker, confirmed_board)
+                                stable_board = np.copy(confirmed_board)
+                                last_seen_board = np.copy(confirmed_board)
+                                stable_streak = self.state_streak
+                                manual_applied = True
+                                self.controller._update_state(
+                                    game_phase="live",
+                                    turn_state="board_corrected",
+                                    message=(
+                                        f"Removed confirmed piece at row {command['row']}, "
+                                        f"column {command['column']}"
+                                    ),
+                                )
+                                break
+                    if self.stop_event.is_set():
                         break
-                    confirmed_board = np.copy(maybe_board)
-                    self.confirmed_board = confirmed_board
-                    self._sync_tracker_board(tracker, confirmed_board)
 
-                if board_winner(confirmed_board) == 2:
-                    self._complete_game("YELLOW wins", confirmed_board, winner=2)
-                    break
-                if board_full(confirmed_board):
-                    self._complete_game("Board full: draw", confirmed_board)
-                    break
+                    if manual_applied:
+                        pass
+                    else:
+                        is_legal, _ = legal_human_transition(confirmed_board, stable_board)
+                        if not is_legal:
+                            continue
+                        added = find_single_added_piece(confirmed_board, stable_board, 2)
+                        if added is None:
+                            continue
+                        _, internal_col = added
+                        visible_col = user_visible_column(stable_board, internal_col)
+                        maybe_board = self._await_yellow_confirmation(stable_board, visible_col)
+                        if maybe_board is None:
+                            break
+                        confirmed_board = np.copy(maybe_board)
+                        self.confirmed_board = confirmed_board
+                        self._sync_tracker_board(tracker, confirmed_board)
 
-                self.controller._update_state(
-                    game_status="thinking",
-                    game_phase="live",
-                    turn_state="robot_thinking",
-                    awaiting_confirmation=None,
-                    suggested_red_column=None,
-                    prompt="Thinking about RED placement...",
-                    message="Thinking",
-                )
+                    if board_winner(confirmed_board) == 2:
+                        self._complete_game("YELLOW wins", confirmed_board, winner=2)
+                        break
+                    if board_full(confirmed_board):
+                        self._complete_game("Board full: draw", confirmed_board)
+                        break
+
+                    current_turn = "red"
+                    self.controller._update_state(
+                        game_status="thinking",
+                        game_phase="live",
+                        turn_state="robot_thinking",
+                        awaiting_confirmation=None,
+                        suggested_red_column=None,
+                        prompt="Thinking about RED placement...",
+                        message="Thinking",
+                    )
                 ai_move_col, ai_expected_board, score = compute_ai_move(confirmed_board, self.depth)
                 if ai_move_col is None or ai_expected_board is None:
                     self.controller._update_state(game_status="finished", message="No legal RED move found")
@@ -1984,6 +2161,7 @@ class GameLoopWorker:
                     self._complete_game("Board full: draw", confirmed_board)
                     break
 
+                current_turn = "yellow"
                 self.controller._update_state(
                     game_status="waiting_human_move",
                     game_phase="live",
