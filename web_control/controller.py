@@ -1564,6 +1564,19 @@ class GameLoopWorker:
             self._belt_feeder = None
             self.controller._active_belt_feeder = None
 
+    def _ensure_belt_feeder_connected(self, timeout_s=25.0, context_message="Connecting belt feeder controller"):
+        if not bool(self.controller.get_state()["game_belt_enabled"]):
+            return
+        self._sync_belt_feeder_mode()
+        if self._belt_feeder is None:
+            raise RuntimeError("Game belt staging worker is unavailable")
+        self.controller._update_state(
+            belt_running=False,
+            belt_status="starting",
+            message=context_message,
+        )
+        self._belt_feeder.wait_until_connected(timeout_s=timeout_s)
+
     def _disable_belt_feeder(self):
         if self._belt_feeder is not None:
             self._belt_feeder.stop()
@@ -1779,6 +1792,11 @@ class GameLoopWorker:
                     confirmed_board = np.copy(stable_board)
                     self.confirmed_board = confirmed_board
                     self._sync_tracker_board(tracker, confirmed_board)
+                    if bool(self.controller.get_state()["game_belt_enabled"]):
+                        self._ensure_belt_feeder_connected(
+                            timeout_s=30.0,
+                            context_message="Preparing belt feeder for slow staging",
+                        )
                     self.controller._update_state(
                         game_status="waiting_human_move",
                         game_phase="live",
@@ -1888,6 +1906,11 @@ class GameLoopWorker:
 
                 visible_red_col = user_visible_column(ai_expected_board, ai_move_col)
                 use_belt = bool(self.controller.get_state()["game_belt_enabled"])
+                if use_belt:
+                    self._ensure_belt_feeder_connected(
+                        timeout_s=30.0,
+                        context_message="Ensuring belt feeder is connected for red launch",
+                    )
                 self.controller._update_state(
                     suggested_red_column=visible_red_col,
                     game_status="ready_for_launch",
@@ -1909,7 +1932,6 @@ class GameLoopWorker:
                     visible_red_col,
                 )
                 if use_belt:
-                    self._sync_belt_feeder_mode()
                     if self._belt_feeder is None:
                         raise RuntimeError("Game belt staging worker is unavailable")
                     self._belt_feeder.launch_piece(
@@ -1994,15 +2016,18 @@ class GameLoopBeltFeeder:
         self._launch_error = None
         self._paused = False
         self._ready_confirmed = False
+        self._session_ready = threading.Event()
 
     def start(self):
         if self.thread and self.thread.is_alive():
             return
+        self._session_ready.clear()
         self.thread = threading.Thread(target=self.run, daemon=True, name="game-belt-feeder")
         self.thread.start()
 
     def stop(self):
         self.stop_event.set()
+        self._session_ready.set()
         self.commands.put({"type": "stop"})
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=3.0)
@@ -2029,6 +2054,14 @@ class GameLoopBeltFeeder:
         )
         if not self._launch_done.wait(timeout=timeout_s):
             raise TimeoutError("Timed out waiting for staged and confirmed belt launch")
+        if self._launch_error:
+            raise RuntimeError(self._launch_error)
+
+    def wait_until_connected(self, timeout_s=25.0):
+        if self.thread is None or not self.thread.is_alive():
+            raise RuntimeError("Game belt feeder thread is not running")
+        if not self._session_ready.wait(timeout=timeout_s):
+            raise TimeoutError("Timed out waiting for belt feeder controller connection")
         if self._launch_error:
             raise RuntimeError(self._launch_error)
 
@@ -2076,6 +2109,7 @@ class GameLoopBeltFeeder:
 
     def _open_controller_session(self, serial_module, session_attempts=6):
         last_error = None
+        self._session_ready.clear()
         for attempt in range(1, session_attempts + 1):
             arduino = None
             try:
@@ -2097,6 +2131,7 @@ class GameLoopBeltFeeder:
                 arduino.reset_input_buffer()
                 arduino.reset_output_buffer()
                 self._sync_controller(arduino, attempts=10, timeout_s=2.0)
+                self._session_ready.set()
                 return arduino
             except Exception as exc:
                 last_error = exc
