@@ -1824,7 +1824,7 @@ class GameLoopBeltFeeder:
     def confirm_ready(self, accept=True):
         self.commands.put({"type": "confirm_ready" if accept else "reject_ready"})
 
-    def launch_piece(self, launch_speed, launch_accel, launch_steps, timeout_s=20.0):
+    def launch_piece(self, launch_speed, launch_accel, launch_steps, timeout_s=90.0):
         self._launch_error = None
         self._launch_done.clear()
         self.commands.put(
@@ -1836,7 +1836,7 @@ class GameLoopBeltFeeder:
             }
         )
         if not self._launch_done.wait(timeout=timeout_s):
-            raise TimeoutError("Timed out waiting for staged belt launch")
+            raise TimeoutError("Timed out waiting for staged and confirmed belt launch")
         if self._launch_error:
             raise RuntimeError(self._launch_error)
 
@@ -1878,6 +1878,22 @@ class GameLoopBeltFeeder:
                 time.sleep(0.3)
         raise TimeoutError("Controller did not respond to PING")
 
+    def _start_staging_run(self, arduino, accel):
+        self._send_and_wait(arduino, f"SPEED {BELT_STAGE_SPEED}", {"OK", "ERR"}, attempts=6)
+        self._send_and_wait(arduino, f"ACCEL {int(accel)}", {"OK", "ERR"}, attempts=6)
+        self._send_and_wait(arduino, f"RUN {BELT_STAGE_SPEED}", {"OK", "ERR"}, attempts=6)
+        self.controller._update_state(
+            belt_running=True,
+            belt_status="staging",
+            belt_mode="continuous",
+            belt_speed=BELT_STAGE_SPEED,
+            belt_accel=int(accel),
+            belt_piece_ready=False,
+            belt_ready_confirmed=False,
+            belt_error=None,
+            message="Feeding slowly toward the sensor to stage a red piece",
+        )
+
     def run(self):
         arduino = None
         sensor = None
@@ -1901,6 +1917,8 @@ class GameLoopBeltFeeder:
                 arduino.reset_input_buffer()
                 arduino.reset_output_buffer()
                 self._sync_controller(arduino)
+                self._start_staging_run(arduino, int(state["belt_accel"]))
+                stage_running = True
 
                 while not self.stop_event.is_set() and not self.parent_stop_event.is_set():
                     while True:
@@ -1945,6 +1963,9 @@ class GameLoopBeltFeeder:
                                 belt_ready_confirmed=False,
                                 message="Rejected staged belt piece; resuming slow feed",
                             )
+                            if not stage_running:
+                                self._start_staging_run(arduino, int(self.controller.get_state()["belt_accel"]))
+                                stage_running = True
 
                     if self.stop_event.is_set() or self.parent_stop_event.is_set():
                         break
@@ -2045,26 +2066,24 @@ class GameLoopBeltFeeder:
                         continue
 
                     if not stage_running:
-                        self._send_and_wait(arduino, f"SPEED {BELT_STAGE_SPEED}", {"OK", "ERR"})
-                        self._send_and_wait(arduino, f"ACCEL {int(state['belt_accel'])}", {"OK", "ERR"})
-                        self._send_and_wait(arduino, f"RUN {BELT_STAGE_SPEED}", {"OK", "ERR"})
+                        self._start_staging_run(arduino, int(state["belt_accel"]))
                         stage_running = True
-
-                    self.controller._update_state(
-                        belt_running=True,
-                        belt_status="staging",
-                        belt_mode="continuous",
-                        belt_speed=BELT_STAGE_SPEED,
-                        belt_accel=int(state["belt_accel"]),
-                        belt_piece_ready=False,
-                        belt_ready_confirmed=False,
-                        belt_error=None,
-                        message=(
-                            "No staged red piece yet; feeding slowly toward the sensor"
-                            if pending_launch is None
-                            else "Launch pending; feeding slowly until a red piece reaches the sensor"
-                        ),
-                    )
+                    else:
+                        self.controller._update_state(
+                            belt_running=True,
+                            belt_status="staging",
+                            belt_mode="continuous",
+                            belt_speed=BELT_STAGE_SPEED,
+                            belt_accel=int(state["belt_accel"]),
+                            belt_piece_ready=False,
+                            belt_ready_confirmed=False,
+                            belt_error=None,
+                            message=(
+                                "No staged red piece yet; feeding slowly toward the sensor"
+                                if pending_launch is None
+                                else "Launch pending; feeding slowly until a red piece reaches the sensor"
+                            ),
+                        )
         except Exception as exc:
             self._launch_error = str(exc)
             self._launch_done.set()
