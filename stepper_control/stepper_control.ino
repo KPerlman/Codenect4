@@ -42,6 +42,25 @@ void runBlockingMove(AccelStepper &stepper, bool &runContinuous, long steps) {
   }
 }
 
+void runConstantSpeedMove(AccelStepper &stepper, bool &runContinuous, long steps) {
+  runContinuous = false;
+  float configuredSpeed = abs(stepper.speed());
+  if (configuredSpeed < 1.0f) {
+    configuredSpeed = stepper.maxSpeed();
+  }
+  if (configuredSpeed < 1.0f) {
+    configuredSpeed = 1.0f;
+  }
+
+  float signedSpeed = steps >= 0 ? configuredSpeed : -configuredSpeed;
+  stepper.move(steps);
+  stepper.setSpeed(signedSpeed);
+  while (stepper.distanceToGo() != 0) {
+    stepper.runSpeedToPosition();
+  }
+  stepper.setSpeed(0);
+}
+
 bool handleRunCommand(AccelStepper &stepper, bool &runContinuous, long speed) {
   if (speed == 0) {
     replyErr();
@@ -82,6 +101,12 @@ bool handleAccelCommand(AccelStepper &stepper, long accel) {
 
 bool handleStepsCommand(AccelStepper &stepper, bool &runContinuous, long steps) {
   runBlockingMove(stepper, runContinuous, steps);
+  PiSerial.println("DONE");
+  return true;
+}
+
+bool handleRunStepsCommand(AccelStepper &stepper, bool &runContinuous, long steps) {
+  runConstantSpeedMove(stepper, runContinuous, steps);
   PiSerial.println("DONE");
   return true;
 }
@@ -148,6 +173,10 @@ void loop() {
     handleStepsCommand(gateStepper, gateRunContinuous, parseValue(msg, 11));
     return;
   }
+  if (msg.startsWith("GATE RUNSTEPS ")) {
+    handleRunStepsCommand(gateStepper, gateRunContinuous, parseValue(msg, 14));
+    return;
+  }
 
   if (msg.startsWith("RUN ")) {
     handleRunCommand(primaryStepper, primaryRunContinuous, parseValue(msg, 4));
@@ -172,6 +201,10 @@ void loop() {
   }
   if (msg.startsWith("STEPS ")) {
     handleStepsCommand(primaryStepper, primaryRunContinuous, parseValue(msg, 6));
+    return;
+  }
+  if (msg.startsWith("RUNSTEPS ")) {
+    handleRunStepsCommand(primaryStepper, primaryRunContinuous, parseValue(msg, 9));
     return;
   }
   if (msg == "MOVE") {

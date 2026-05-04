@@ -126,8 +126,8 @@ def main():
             print(f"Setting SETDIST {args.steps}")
             send_and_wait(arduino, f"SETDIST {args.steps}", {"OK", "ERR"})
 
-            print(f"Sending STEPS {args.steps}")
-            send_and_wait(arduino, f"STEPS {args.steps}", {"DONE"}, timeout_s=10.0)
+            print(f"Sending RUNSTEPS {args.steps}")
+            send_and_wait(arduino, f"RUNSTEPS {args.steps}", {"DONE"}, timeout_s=10.0)
         else:
             print(f"Interactive mode at {args.speed} steps/sec")
             try:

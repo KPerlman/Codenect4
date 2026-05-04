@@ -155,7 +155,7 @@ def main():
             else:
                 empty_samples.append((r, g, b, clear))
 
-            send_cmd(ser, f"STEPS {STEP_SIZE}", {"DONE"}, timeout_s=10.0)
+            send_cmd(ser, f"RUNSTEPS {STEP_SIZE}", {"DONE"}, timeout_s=10.0)
             time.sleep(0.2)
     finally:
         ser.close()

@@ -135,7 +135,7 @@ def boost(ser, default_speed, default_accel, boost_speed, boost_steps, boost_acc
     send_cmd(ser, "STOP", {"OK"})
     send_cmd(ser, f"ACCEL {boost_accel}", {"OK", "ERR"})
     send_cmd(ser, f"SPEED {boost_speed}", {"OK", "ERR"})
-    send_cmd(ser, f"STEPS {boost_steps}", {"DONE"}, timeout_s=10.0)
+    send_cmd(ser, f"RUNSTEPS {boost_steps}", {"DONE"}, timeout_s=10.0)
     send_cmd(ser, f"ACCEL {default_accel}", {"OK", "ERR"})
     send_cmd(ser, f"SPEED {default_speed}", {"OK", "ERR"})
     send_cmd(ser, f"RUN {default_speed}", {"OK", "ERR"})
@@ -156,7 +156,7 @@ def calibrate_mode(ser, sensor, initial_r_thresh):
 
     try:
         while True:
-            send_cmd(ser, f"STEPS {CALIBRATE_STEPS}", {"DONE"}, timeout_s=5.0)
+            send_cmd(ser, f"RUNSTEPS {CALIBRATE_STEPS}", {"DONE"}, timeout_s=5.0)
             red = read_red(sensor)
             guess = "piece" if red >= r_thresh else "empty"
             print(f"Red={red:.1f} guess={guess} threshold={r_thresh:.1f}")

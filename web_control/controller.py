@@ -1337,7 +1337,7 @@ class GameLoopWorker:
                                 f"{launch_steps} steps"
                             ),
                         )
-                        self._send_serial_cmd(arduino, f"STEPS {launch_steps}", {"DONE"}, timeout_s=12.0)
+                        self._send_serial_cmd(arduino, f"RUNSTEPS {launch_steps}", {"DONE"}, timeout_s=12.0)
                         self.controller._update_state(
                             belt_running=False,
                             belt_status="completed",
@@ -1955,7 +1955,7 @@ class BeltWorker:
                         belt_mode="steps",
                         message=f"Running belt for {self.steps} steps",
                     )
-                    self._send_and_wait(arduino, f"STEPS {self.steps}", {"DONE"}, timeout_s=10.0)
+                    self._send_and_wait(arduino, f"RUNSTEPS {self.steps}", {"DONE"}, timeout_s=10.0)
                     self.controller._update_state(
                         belt_running=False,
                         belt_status="completed",
