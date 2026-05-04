@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04c"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04d"
 
 
 class StartGameRequest(BaseModel):
@@ -1244,7 +1244,14 @@ PAGE_HTML = """
         return {
           className: "banner",
           title: "Calibrating board",
-          text: state.message || "Keep the board visible and empty for a moment.",
+          text: "Keep the board visible and empty for a moment.",
+        };
+      }
+      if (state.game_status === "starting") {
+        return {
+          className: "banner",
+          title: "Starting game loop",
+          text: "Opening the camera, bringing the board online, and preparing the runtime.",
         };
       }
       if (state.game_status === "finished") {

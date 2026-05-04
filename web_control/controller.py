@@ -1493,6 +1493,12 @@ class GameLoopWorker:
             self._belt_feeder = None
             self.controller._active_belt_feeder = None
 
+    def _disable_belt_feeder(self):
+        if self._belt_feeder is not None:
+            self._belt_feeder.stop()
+            self._belt_feeder = None
+            self.controller._active_belt_feeder = None
+
     def _pause_runtime_subsystems(self):
         if self._belt_feeder is not None:
             self._belt_feeder.pause()
@@ -1503,9 +1509,7 @@ class GameLoopWorker:
 
     def _complete_game(self, message, confirmed_board, winner=0):
         if self._belt_feeder is not None:
-            self._belt_feeder.stop()
-            self._belt_feeder = None
-            self.controller._active_belt_feeder = None
+            self._disable_belt_feeder()
         sorted_target = int(np.count_nonzero(confirmed_board != 0)) + 5
         self._move_gate_out_if_needed()
         self.controller.enable_sorting(max_sorted=sorted_target)
@@ -1573,10 +1577,11 @@ class GameLoopWorker:
                 message="Waiting for camera and tracker calibration",
                 error=None,
             )
-            self._sync_belt_feeder_mode()
-
             while not self.stop_event.is_set():
-                self._sync_belt_feeder_mode()
+                if tracker.is_calibrated and confirmed_board is not None:
+                    self._sync_belt_feeder_mode()
+                else:
+                    self._disable_belt_feeder()
                 for command in self._drain_commands():
                     runtime_result = self._maybe_handle_runtime_command(
                         command,
@@ -1874,10 +1879,7 @@ class GameLoopWorker:
         except Exception as exc:
             self.controller._finalize_game_stop("Game loop failed", error=str(exc))
         finally:
-            if self._belt_feeder is not None:
-                self._belt_feeder.stop()
-                self._belt_feeder = None
-                self.controller._active_belt_feeder = None
+            self._disable_belt_feeder()
             active_drop_servo_channel = self._reset_drop_servo(
                 servo_pca,
                 active_drop_servo_channel,
