@@ -32,6 +32,11 @@ class ManualHumanMoveRequest(BaseModel):
     column: int
 
 
+class RemovePieceRequest(BaseModel):
+    row: int
+    column: int
+
+
 class BeltStartRequest(BaseModel):
     speed: int = 600
     accel: int = 400
@@ -113,6 +118,11 @@ def api_confirm_red():
 @app.post("/api/game/manual-human-move")
 def api_manual_human_move(request: ManualHumanMoveRequest):
     return controller.manual_human_move(request.column)
+
+
+@app.post("/api/game/remove-piece")
+def api_remove_piece(request: RemovePieceRequest):
+    return controller.remove_piece(request.row, request.column)
 
 
 @app.post("/api/sorting/enable")
@@ -891,6 +901,11 @@ PAGE_HTML = """
       await refresh();
     }
 
+    async function removeBoardPiece(row, column) {
+      await api("/api/game/remove-piece", "POST", { row, column });
+      await refresh();
+    }
+
     function getPendingYellowCells(state) {
       if (!state || state.awaiting_confirmation !== "yellow" || !state.current_board || !state.confirmed_board) {
         return [];
@@ -906,18 +921,26 @@ PAGE_HTML = """
       return pending;
     }
 
-    async function handleBoardClick(visibleColumn, isPendingCell) {
+    async function handleBoardClick(visibleColumn, row, isPendingCell, isConfirmedOccupied) {
       if (!latestState) return;
       if (
         latestState.game_status === "waiting_human_move" ||
         latestState.turn_state === "human_turn"
       ) {
+        if (isConfirmedOccupied) {
+          await removeBoardPiece(row, visibleColumn);
+          return;
+        }
         await manualYellowMove(visibleColumn);
         return;
       }
       if (latestState.awaiting_confirmation === "yellow") {
         if (isPendingCell) {
           await confirmYellow(true);
+          return;
+        }
+        if (isConfirmedOccupied) {
+          await removeBoardPiece(row, visibleColumn);
           return;
         }
         await api("/api/game/yellow-confirm", "POST", { accept: false, column: visibleColumn });
@@ -930,6 +953,10 @@ PAGE_HTML = """
         visibleColumn === latestState.suggested_red_column
       ) {
         await confirmRed();
+        return;
+      }
+      if (isConfirmedOccupied) {
+        await removeBoardPiece(row, visibleColumn);
       }
     }
 
@@ -951,6 +978,13 @@ PAGE_HTML = """
           const originalCol = row.length - 1 - colIdx;
           const key = `${rowIdx}:${originalCol}`;
           const isPending = pendingKeys.has(key);
+          const confirmedBoard = latestState && latestState.confirmed_board ? latestState.confirmed_board : null;
+          const isConfirmedOccupied = !!(
+            confirmedBoard &&
+            confirmedBoard[rowIdx] &&
+            confirmedBoard[rowIdx][originalCol] !== 0 &&
+            !isPending
+          );
           if (isPending) {
             slot.classList.remove("yellow");
             slot.classList.add("pending-yellow");
@@ -961,14 +995,18 @@ PAGE_HTML = """
               latestState.turn_state === "human_turn")
           ) {
             slot.classList.add("clickable", "manual-yellow");
-            slot.title = `Register yellow in column ${originalCol}`;
-            slot.addEventListener("click", () => handleBoardClick(originalCol, false));
+            slot.title = isConfirmedOccupied
+              ? `Remove confirmed piece at row ${rowIdx}, column ${originalCol}`
+              : `Register yellow in column ${originalCol}`;
+            slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, false, isConfirmedOccupied));
           } else if (latestState && latestState.awaiting_confirmation === "yellow") {
             slot.classList.add("clickable");
             slot.title = isPending
               ? `Confirm detected yellow in column ${originalCol}`
-              : `Override to column ${originalCol}`;
-            slot.addEventListener("click", () => handleBoardClick(originalCol, isPending));
+              : isConfirmedOccupied
+                ? `Remove confirmed piece at row ${rowIdx}, column ${originalCol}`
+                : `Override to column ${originalCol}`;
+            slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, isPending, isConfirmedOccupied));
           } else if (
             latestState &&
             latestState.awaiting_confirmation === "red" &&
@@ -977,7 +1015,11 @@ PAGE_HTML = """
           ) {
             slot.classList.add("clickable");
             slot.title = `Confirm red placement in column ${originalCol}`;
-            slot.addEventListener("click", () => handleBoardClick(originalCol, false));
+            slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, false, false));
+          } else if (isConfirmedOccupied) {
+            slot.classList.add("clickable");
+            slot.title = `Remove confirmed piece at row ${rowIdx}, column ${originalCol}`;
+            slot.addEventListener("click", () => handleBoardClick(originalCol, rowIdx, false, true));
           }
           root.appendChild(slot);
         }

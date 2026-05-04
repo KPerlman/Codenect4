@@ -581,6 +581,12 @@ class RobotWebController:
         self._game_commands.put({"type": "manual_human_move", "column": column})
         return self.get_state()
 
+    def remove_piece(self, row, column):
+        if self._game_commands is None:
+            return self.get_state()
+        self._game_commands.put({"type": "remove_piece", "row": row, "column": column})
+        return self.get_state()
+
     def start_sorter_calibration(self, sensor_bus=3):
         self.disable_sorting()
         with self._lock:
@@ -717,6 +723,20 @@ class GameLoopWorker:
             pending_yellow_count=0,
         )
 
+    def _remove_piece_from_board(self, board_state, row, visible_column):
+        internal_column = internal_column_from_user(np.asarray(board_state), visible_column)
+        next_board = np.copy(board_state)
+        if row < 0 or row >= next_board.shape[0]:
+            return None
+        if internal_column < 0 or internal_column >= next_board.shape[1]:
+            return None
+        if next_board[row, internal_column] == 0:
+            return None
+        for current_row in range(row, 0, -1):
+            next_board[current_row, internal_column] = next_board[current_row - 1, internal_column]
+        next_board[0, internal_column] = 0
+        return next_board
+
     def _read_belt_color_sample(self, sensor, count=8, delay_s=0.04):
         r_total = g_total = b_total = c_total = 0.0
         for _ in range(count):
@@ -785,6 +805,14 @@ class GameLoopWorker:
                     corrected = self._handle_manual_move(self.confirmed_board, command["column"])
                     if corrected is not None:
                         return corrected
+                if command["type"] == "remove_piece":
+                    corrected = self._remove_piece_from_board(
+                        self.confirmed_board,
+                        command["row"],
+                        command["column"],
+                    )
+                    if corrected is not None:
+                        return corrected
             time.sleep(0.1)
         return None
 
@@ -813,6 +841,14 @@ class GameLoopWorker:
                     return None
                 if command["type"] == "confirm_red":
                     return np.copy(ai_expected_board)
+                if command["type"] == "remove_piece":
+                    corrected = self._remove_piece_from_board(
+                        confirmed_board,
+                        command["row"],
+                        command["column"],
+                    )
+                    if corrected is not None:
+                        return corrected
             ret, frame = cap.read()
             if not ret:
                 time.sleep(0.1)
@@ -1228,6 +1264,29 @@ class GameLoopWorker:
                                 game_phase="live",
                                 turn_state="human_move_registered",
                                 message=f"Manual YELLOW move recorded in column {command['column']}",
+                            )
+                            break
+                    elif command["type"] == "remove_piece":
+                        corrected_board = self._remove_piece_from_board(
+                            confirmed_board,
+                            command["row"],
+                            command["column"],
+                        )
+                        if corrected_board is not None:
+                            confirmed_board = corrected_board
+                            self.confirmed_board = confirmed_board
+                            self._sync_tracker_board(tracker, confirmed_board)
+                            stable_board = np.copy(confirmed_board)
+                            last_seen_board = np.copy(confirmed_board)
+                            stable_streak = self.state_streak
+                            manual_applied = True
+                            self.controller._update_state(
+                                game_phase="live",
+                                turn_state="board_corrected",
+                                message=(
+                                    f"Removed confirmed piece at row {command['row']}, "
+                                    f"column {command['column']}"
+                                ),
                             )
                             break
                     elif command["type"] == "stop":
