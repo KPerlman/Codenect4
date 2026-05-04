@@ -30,6 +30,10 @@ from connect4_vision import Connect4Tracker
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DROP_SERVO_ANGLE = 100
+GATE_PORT = "/dev/serial0"
+GATE_DEFAULT_SPEED = 600
+GATE_DEFAULT_ACCEL = 400
+GATE_DEFAULT_STEPS = 1000
 
 
 def move_servo_zero_position(pca, channel, angle, max_angle=180, offset=0):
@@ -101,6 +105,13 @@ class SharedState:
     belt_accel: int = 400
     belt_steps: int | None = None
     belt_error: str | None = None
+    gate_running: bool = False
+    gate_status: str = "idle"
+    gate_mode: str = "steps"
+    gate_speed: int = GATE_DEFAULT_SPEED
+    gate_accel: int = GATE_DEFAULT_ACCEL
+    gate_steps: int | None = None
+    gate_error: str | None = None
     updated_at: float = field(default_factory=time.time)
 
     def to_dict(self):
@@ -138,6 +149,13 @@ class SharedState:
             "belt_accel": self.belt_accel,
             "belt_steps": self.belt_steps,
             "belt_error": self.belt_error,
+            "gate_running": self.gate_running,
+            "gate_status": self.gate_status,
+            "gate_mode": self.gate_mode,
+            "gate_speed": self.gate_speed,
+            "gate_accel": self.gate_accel,
+            "gate_steps": self.gate_steps,
+            "gate_error": self.gate_error,
             "updated_at": self.updated_at,
         }
 
@@ -146,6 +164,7 @@ class RobotWebController:
     def __init__(self):
         self._lock = threading.RLock()
         self._state = SharedState()
+        self._arduino_lock = threading.Lock()
         self._game_thread = None
         self._game_stop_event = None
         self._game_commands = None
@@ -156,6 +175,9 @@ class RobotWebController:
         self._sorter_calibration_commands = None
         self._belt_thread = None
         self._belt_stop_event = None
+        self._gate_thread = None
+        self._gate_stop_event = None
+        self._gate_is_out = False
 
     def start_belt(self, speed=600, accel=400, steps=None):
         with self._lock:
@@ -199,6 +221,51 @@ class RobotWebController:
             belt_running=False,
             belt_status="stopped",
             message="Belt stopped",
+        )
+        return self.get_state()
+
+    def start_gate(self, speed=GATE_DEFAULT_SPEED, accel=GATE_DEFAULT_ACCEL, steps=None):
+        with self._lock:
+            if self._gate_thread and self._gate_thread.is_alive():
+                return self._state.to_dict()
+            self._gate_stop_event = threading.Event()
+            worker = GateWorker(
+                controller=self,
+                stop_event=self._gate_stop_event,
+                speed=speed,
+                accel=accel,
+                steps=steps,
+            )
+            self._gate_thread = threading.Thread(
+                target=worker.run,
+                daemon=True,
+                name="gate-worker",
+            )
+            self._gate_thread.start()
+            self._update_state(
+                gate_running=True,
+                gate_status="starting",
+                gate_mode="steps" if steps is not None else "continuous",
+                gate_speed=speed,
+                gate_accel=accel,
+                gate_steps=steps,
+                gate_error=None,
+                message="Starting gate stepper",
+            )
+            return self._state.to_dict()
+
+    def stop_gate(self):
+        thread = None
+        with self._lock:
+            if self._gate_stop_event is not None:
+                self._gate_stop_event.set()
+            thread = self._gate_thread
+        if thread and thread.is_alive():
+            thread.join(timeout=3.0)
+        self._update_state(
+            gate_running=False,
+            gate_status="stopped",
+            message="Gate stepper stopped",
         )
         return self.get_state()
 
@@ -594,6 +661,108 @@ class GameLoopWorker:
             time.sleep(0.05)
         return None
 
+    def _wait_for_serial(self, arduino, targets, timeout_s=5.0):
+        deadline = time.time() + timeout_s
+        while True:
+            if self.stop_event.is_set():
+                raise RuntimeError("Game loop stopping")
+            if time.time() > deadline:
+                raise TimeoutError(f"Timeout waiting for {targets}")
+            line = arduino.readline().decode(errors="ignore").strip()
+            line = "".join(ch for ch in line if ch.isprintable())
+            if line in targets:
+                return line
+
+    def _send_serial_cmd(self, arduino, command, targets, timeout_s=5.0, attempts=3, pre_delay_s=0.1):
+        last_error = None
+        for _ in range(attempts):
+            time.sleep(pre_delay_s)
+            arduino.write(f"{command}\n".encode())
+            try:
+                return self._wait_for_serial(arduino, targets, timeout_s=timeout_s)
+            except TimeoutError as exc:
+                last_error = exc
+                arduino.reset_input_buffer()
+                time.sleep(0.2)
+        raise last_error
+
+    def _sync_serial_controller(self, arduino, attempts=6, timeout_s=1.5):
+        for _ in range(attempts):
+            arduino.write(b"PING\n")
+            try:
+                self._wait_for_serial(arduino, {"PONG"}, timeout_s=timeout_s)
+                time.sleep(0.3)
+                arduino.reset_input_buffer()
+                return
+            except TimeoutError:
+                arduino.reset_input_buffer()
+                time.sleep(0.3)
+        raise TimeoutError("Controller did not respond to PING")
+
+    def _run_gate_steps(self, steps, speed=GATE_DEFAULT_SPEED, accel=GATE_DEFAULT_ACCEL):
+        import serial
+
+        self.controller._update_state(
+            gate_running=True,
+            gate_status="running",
+            gate_mode="steps",
+            gate_speed=speed,
+            gate_accel=accel,
+            gate_steps=steps,
+            gate_error=None,
+        )
+        with self.controller._arduino_lock:
+            arduino = serial.Serial(GATE_PORT, 9600, timeout=1)
+            try:
+                time.sleep(2)
+                arduino.reset_input_buffer()
+                arduino.reset_output_buffer()
+                self._sync_serial_controller(arduino)
+                self._send_serial_cmd(arduino, f"GATE SPEED {speed}", {"OK", "ERR"})
+                self._send_serial_cmd(arduino, f"GATE ACCEL {accel}", {"OK", "ERR"})
+                self._send_serial_cmd(arduino, f"GATE STEPS {steps}", {"DONE"}, timeout_s=12.0)
+            finally:
+                arduino.close()
+        self.controller._update_state(
+            gate_running=False,
+            gate_status="completed",
+            gate_error=None,
+        )
+
+    def _move_gate_out_if_needed(self):
+        with self.controller._lock:
+            if self.controller._gate_is_out:
+                return
+        self.controller._update_state(message="Moving clear gate out of the board")
+        self._run_gate_steps(GATE_DEFAULT_STEPS)
+        with self.controller._lock:
+            self.controller._gate_is_out = True
+        self.controller._update_state(message="Clear gate moved out of the board")
+
+    def _move_gate_in_if_needed(self):
+        with self.controller._lock:
+            if not self.controller._gate_is_out:
+                return
+        self.controller._update_state(message="Moving clear gate back into position")
+        self._run_gate_steps(-GATE_DEFAULT_STEPS)
+        with self.controller._lock:
+            self.controller._gate_is_out = False
+        self.controller._update_state(message="Clear gate returned to position")
+
+    def _complete_game(self, message, winner=0):
+        self._move_gate_out_if_needed()
+        self.controller._update_state(
+            game_status="finished",
+            game_phase="complete",
+            turn_state="game_over",
+            awaiting_confirmation=None,
+            prompt=None,
+            detected_yellow_column=None,
+            suggested_red_column=None,
+            message=message,
+            winner=winner,
+        )
+
     def run(self):
         cap = None
         servo_pca = None
@@ -609,6 +778,8 @@ class GameLoopWorker:
         stable_board = None
 
         try:
+            self._move_gate_in_if_needed()
+
             try:
                 import board
                 import busio
@@ -787,25 +958,10 @@ class GameLoopWorker:
                     self._sync_tracker_board(tracker, confirmed_board)
 
                 if board_winner(confirmed_board) == 2:
-                    self.controller._update_state(
-                        game_status="finished",
-                        game_phase="complete",
-                        turn_state="game_over",
-                        awaiting_confirmation=None,
-                        prompt=None,
-                        message="YELLOW wins",
-                        winner=2,
-                    )
+                    self._complete_game("YELLOW wins", winner=2)
                     break
                 if board_full(confirmed_board):
-                    self.controller._update_state(
-                        game_status="finished",
-                        game_phase="complete",
-                        turn_state="game_over",
-                        awaiting_confirmation=None,
-                        prompt=None,
-                        message="Board full: draw",
-                    )
+                    self._complete_game("Board full: draw")
                     break
 
                 self.controller._update_state(
@@ -853,25 +1009,10 @@ class GameLoopWorker:
                 stable_streak = self.state_streak
 
                 if board_winner(confirmed_board) == 1:
-                    self.controller._update_state(
-                        game_status="finished",
-                        game_phase="complete",
-                        turn_state="game_over",
-                        awaiting_confirmation=None,
-                        prompt=None,
-                        message="RED wins",
-                        winner=1,
-                    )
+                    self._complete_game("RED wins", winner=1)
                     break
                 if board_full(confirmed_board):
-                    self.controller._update_state(
-                        game_status="finished",
-                        game_phase="complete",
-                        turn_state="game_over",
-                        awaiting_confirmation=None,
-                        prompt=None,
-                        message="Board full: draw",
-                    )
+                    self._complete_game("Board full: draw")
                     break
 
                 self.controller._update_state(
@@ -1131,45 +1272,46 @@ class BeltWorker:
         try:
             import serial
 
-            arduino = serial.Serial(self.PORT, 9600, timeout=1)
-            time.sleep(2)
-            arduino.reset_input_buffer()
-            arduino.reset_output_buffer()
+            with self.controller._arduino_lock:
+                arduino = serial.Serial(self.PORT, 9600, timeout=1)
+                time.sleep(2)
+                arduino.reset_input_buffer()
+                arduino.reset_output_buffer()
 
-            self._sync_controller(arduino)
-            self._send_and_wait(arduino, f"SPEED {self.speed}", {"OK", "ERR"})
-            self._send_and_wait(arduino, f"ACCEL {self.accel}", {"OK", "ERR"})
+                self._sync_controller(arduino)
+                self._send_and_wait(arduino, f"SPEED {self.speed}", {"OK", "ERR"})
+                self._send_and_wait(arduino, f"ACCEL {self.accel}", {"OK", "ERR"})
 
-            if self.steps is not None:
-                self.controller._update_state(
-                    belt_status="running",
-                    belt_mode="steps",
-                    message=f"Running belt for {self.steps} steps",
-                )
-                self._send_and_wait(arduino, f"STEPS {self.steps}", {"DONE"}, timeout_s=10.0)
-                self.controller._update_state(
-                    belt_running=False,
-                    belt_status="completed",
-                    message=f"Belt step run completed ({self.steps} steps)",
-                )
-            else:
-                self._send_and_wait(arduino, f"RUN {self.speed}", {"OK", "ERR"})
-                self.controller._update_state(
-                    belt_running=True,
-                    belt_status="running",
-                    belt_mode="continuous",
-                    message=f"Belt running continuously at {self.speed} steps/sec",
-                )
-                while not self.stop_event.is_set():
-                    time.sleep(0.1)
-                self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0)
-                belt_stopped_cleanly = True
-                self.controller._update_state(
-                    belt_running=False,
-                    belt_status="stopped",
-                    belt_error=None,
-                    message="Belt stopped",
-                )
+                if self.steps is not None:
+                    self.controller._update_state(
+                        belt_status="running",
+                        belt_mode="steps",
+                        message=f"Running belt for {self.steps} steps",
+                    )
+                    self._send_and_wait(arduino, f"STEPS {self.steps}", {"DONE"}, timeout_s=10.0)
+                    self.controller._update_state(
+                        belt_running=False,
+                        belt_status="completed",
+                        message=f"Belt step run completed ({self.steps} steps)",
+                    )
+                else:
+                    self._send_and_wait(arduino, f"RUN {self.speed}", {"OK", "ERR"})
+                    self.controller._update_state(
+                        belt_running=True,
+                        belt_status="running",
+                        belt_mode="continuous",
+                        message=f"Belt running continuously at {self.speed} steps/sec",
+                    )
+                    while not self.stop_event.is_set():
+                        time.sleep(0.1)
+                    self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0)
+                    belt_stopped_cleanly = True
+                    self.controller._update_state(
+                        belt_running=False,
+                        belt_status="stopped",
+                        belt_error=None,
+                        message="Belt stopped",
+                    )
         except Exception as exc:
             if str(exc) == "Belt stop requested":
                 belt_stopped_cleanly = True
@@ -1193,6 +1335,135 @@ class BeltWorker:
                     self.controller._belt_thread = None
                 if belt_stopped_cleanly:
                     self.controller._belt_stop_event = None
+            if arduino is not None:
+                try:
+                    arduino.close()
+                except Exception:
+                    pass
+
+
+class GateWorker:
+    PORT = GATE_PORT
+
+    def __init__(self, controller, stop_event, speed, accel, steps):
+        self.controller = controller
+        self.stop_event = stop_event
+        self.speed = speed
+        self.accel = accel
+        self.steps = steps
+
+    def _wait_for(self, arduino, targets, timeout_s=5.0):
+        deadline = time.time() + timeout_s
+        while True:
+            if self.stop_event.is_set():
+                raise RuntimeError("Gate stop requested")
+            if time.time() > deadline:
+                raise TimeoutError(f"Timeout waiting for {targets}")
+            line = arduino.readline().decode(errors="ignore").strip()
+            line = "".join(ch for ch in line if ch.isprintable())
+            if line in targets:
+                return line
+
+    def _send_and_wait(self, arduino, command, targets, timeout_s=5.0, attempts=3, pre_delay_s=0.1):
+        last_error = None
+        for _ in range(attempts):
+            time.sleep(pre_delay_s)
+            arduino.write(f"{command}\n".encode())
+            try:
+                return self._wait_for(arduino, targets, timeout_s=timeout_s)
+            except TimeoutError as exc:
+                last_error = exc
+                arduino.reset_input_buffer()
+                time.sleep(0.2)
+        raise last_error
+
+    def _sync_controller(self, arduino, attempts=6, timeout_s=1.5):
+        for _ in range(attempts):
+            arduino.write(b"PING\n")
+            try:
+                self._wait_for(arduino, {"PONG"}, timeout_s=timeout_s)
+                time.sleep(0.3)
+                arduino.reset_input_buffer()
+                return
+            except TimeoutError:
+                arduino.reset_input_buffer()
+                time.sleep(0.3)
+        raise TimeoutError("Controller did not respond to PING")
+
+    def run(self):
+        arduino = None
+        gate_stopped_cleanly = False
+        try:
+            import serial
+
+            with self.controller._arduino_lock:
+                arduino = serial.Serial(self.PORT, 9600, timeout=1)
+                time.sleep(2)
+                arduino.reset_input_buffer()
+                arduino.reset_output_buffer()
+
+                self._sync_controller(arduino)
+                self._send_and_wait(arduino, f"GATE SPEED {self.speed}", {"OK", "ERR"})
+                self._send_and_wait(arduino, f"GATE ACCEL {self.accel}", {"OK", "ERR"})
+
+                if self.steps is not None:
+                    self.controller._update_state(
+                        gate_status="running",
+                        gate_mode="steps",
+                        message=f"Running gate for {self.steps} steps",
+                    )
+                    self._send_and_wait(arduino, f"GATE STEPS {self.steps}", {"DONE"}, timeout_s=12.0)
+                    with self.controller._lock:
+                        if self.steps > 0:
+                            self.controller._gate_is_out = True
+                        elif self.steps < 0:
+                            self.controller._gate_is_out = False
+                    self.controller._update_state(
+                        gate_running=False,
+                        gate_status="completed",
+                        message=f"Gate step run completed ({self.steps} steps)",
+                    )
+                else:
+                    self._send_and_wait(arduino, f"GATE RUN {self.speed}", {"OK", "ERR"})
+                    self.controller._update_state(
+                        gate_running=True,
+                        gate_status="running",
+                        gate_mode="continuous",
+                        message=f"Gate running continuously at {self.speed} steps/sec",
+                    )
+                    while not self.stop_event.is_set():
+                        time.sleep(0.1)
+                    self._send_and_wait(arduino, "GATE STOP", {"OK"}, timeout_s=2.0)
+                    gate_stopped_cleanly = True
+                    self.controller._update_state(
+                        gate_running=False,
+                        gate_status="stopped",
+                        gate_error=None,
+                        message="Gate stepper stopped",
+                    )
+        except Exception as exc:
+            if str(exc) == "Gate stop requested":
+                gate_stopped_cleanly = True
+                self.controller._update_state(
+                    gate_running=False,
+                    gate_status="stopped",
+                    gate_error=None,
+                    message="Gate stepper stopped",
+                )
+                return
+            self.controller._update_state(
+                gate_running=False,
+                gate_status="error",
+                gate_error=str(exc),
+                message="Gate control failed",
+                error=str(exc),
+            )
+        finally:
+            with self.controller._lock:
+                if self.controller._gate_thread is threading.current_thread():
+                    self.controller._gate_thread = None
+                if gate_stopped_cleanly:
+                    self.controller._gate_stop_event = None
             if arduino is not None:
                 try:
                     arduino.close()

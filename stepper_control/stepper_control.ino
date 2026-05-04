@@ -1,17 +1,24 @@
 #include <AccelStepper.h>
 #include <SoftwareSerial.h>
 
-#define DIR_PIN 2
-#define STEP_PIN 3
-#define EN_PIN 4
+#define PRIMARY_DIR_PIN 2
+#define PRIMARY_STEP_PIN 3
+#define PRIMARY_EN_PIN 4
+
+// Second TMC2209 for the board-clear gate.
+// EN is hard-grounded on the driver, so only DIR/STEP are connected here.
+#define GATE_DIR_PIN 5
+#define GATE_STEP_PIN 6
 
 SoftwareSerial PiSerial(8, 9); // RX, TX
 
-AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
+AccelStepper primaryStepper(AccelStepper::DRIVER, PRIMARY_STEP_PIN, PRIMARY_DIR_PIN);
+AccelStepper gateStepper(AccelStepper::DRIVER, GATE_STEP_PIN, GATE_DIR_PIN);
 
 long liftDistance = 3000;
 bool waitingRelease = false;
-bool runContinuous = false;
+bool primaryRunContinuous = false;
+bool gateRunContinuous = false;
 
 long parseValue(const String &msg, int prefixLen) {
   String value = msg.substring(prefixLen);
@@ -19,88 +26,166 @@ long parseValue(const String &msg, int prefixLen) {
   return value.toInt();
 }
 
+void replyOk() {
+  PiSerial.println("OK");
+}
+
+void replyErr() {
+  PiSerial.println("ERR");
+}
+
+void runBlockingMove(AccelStepper &stepper, bool &runContinuous, long steps) {
+  runContinuous = false;
+  stepper.move(steps);
+  while (stepper.distanceToGo() != 0) {
+    stepper.run();
+  }
+}
+
+bool handleRunCommand(AccelStepper &stepper, bool &runContinuous, long speed) {
+  if (speed == 0) {
+    replyErr();
+    return false;
+  }
+  runContinuous = true;
+  stepper.setSpeed(speed);
+  replyOk();
+  return true;
+}
+
+bool handleStopCommand(AccelStepper &stepper, bool &runContinuous) {
+  runContinuous = false;
+  stepper.setSpeed(0);
+  replyOk();
+  return true;
+}
+
+bool handleSpeedCommand(AccelStepper &stepper, long speed) {
+  if (speed <= 0) {
+    replyErr();
+    return false;
+  }
+  stepper.setMaxSpeed(speed);
+  replyOk();
+  return true;
+}
+
+bool handleAccelCommand(AccelStepper &stepper, long accel) {
+  if (accel <= 0) {
+    replyErr();
+    return false;
+  }
+  stepper.setAcceleration(accel);
+  replyOk();
+  return true;
+}
+
+bool handleStepsCommand(AccelStepper &stepper, bool &runContinuous, long steps) {
+  runBlockingMove(stepper, runContinuous, steps);
+  PiSerial.println("DONE");
+  return true;
+}
+
 void setup() {
   Serial.begin(115200);   // USB debug
   PiSerial.begin(9600);   // Pi UART
 
-  pinMode(EN_PIN, OUTPUT);
-  digitalWrite(EN_PIN, LOW);
+  pinMode(PRIMARY_EN_PIN, OUTPUT);
+  digitalWrite(PRIMARY_EN_PIN, LOW);
 
-  stepper.setMaxSpeed(1500);
-  stepper.setAcceleration(800);
+  primaryStepper.setMaxSpeed(1500);
+  primaryStepper.setAcceleration(800);
+
+  gateStepper.setMaxSpeed(1500);
+  gateStepper.setAcceleration(800);
 }
 
 void loop() {
-  if (runContinuous) {
-    stepper.runSpeed();
+  if (primaryRunContinuous) {
+    primaryStepper.runSpeed();
   }
-  if (PiSerial.available() > 0) {
-    String msg = PiSerial.readStringUntil('\n');
-    msg.trim();
+  if (gateRunContinuous) {
+    gateStepper.runSpeed();
+  }
 
-    if (msg == "PING") {
-      PiSerial.println("PONG");
-      Serial.println("PONG");
-    } else if (msg.startsWith("ECHO ")) {
-      String payload = msg.substring(5);
-      PiSerial.println(payload);
-      Serial.println(payload);
-    } else if (msg.startsWith("RUN ")) {
-      long speed = parseValue(msg, 4);
-      if (speed != 0) {
-        runContinuous = true;
-        stepper.setSpeed(speed);
-        PiSerial.println("OK");
-      } else {
-        PiSerial.println("ERR");
-      }
-    } else if (msg == "STOP") {
-      runContinuous = false;
-      stepper.setSpeed(0);
-      PiSerial.println("OK");
-    } else if (msg.startsWith("SPEED ")) {
-      long speed = parseValue(msg, 6);
-      if (speed > 0) {
-        stepper.setMaxSpeed(speed);
-        PiSerial.println("OK");
-      } else {
-        PiSerial.println("ERR");
-      }
-    } else if (msg.startsWith("ACCEL ")) {
-      long accel = parseValue(msg, 6);
-      if (accel > 0) {
-        stepper.setAcceleration(accel);
-        PiSerial.println("OK");
-      } else {
-        PiSerial.println("ERR");
-      }
-    } else if (msg.startsWith("SETDIST ")) {
-      long dist = parseValue(msg, 8);
-      liftDistance = dist;
-      PiSerial.println("OK");
-    } else if (msg.startsWith("STEPS ")) {
-      long steps = parseValue(msg, 6);
-      runContinuous = false;
-      stepper.move(steps);
-      while (stepper.distanceToGo() != 0) {
-        stepper.run();
-      }
-      PiSerial.println("DONE");
-    } else if (msg.startsWith("MOVE")) {
-      runContinuous = false;
-      stepper.move(liftDistance);
-      while (stepper.distanceToGo() != 0) {
-        stepper.run();
-      }
-      waitingRelease = true;
-      PiSerial.println("ARRIVED");
-    } else if (msg == "RELEASE" && waitingRelease) {
-      stepper.move(-liftDistance);
-      while (stepper.distanceToGo() != 0) {
-        stepper.run();
-      }
-      waitingRelease = false;
-      PiSerial.println("DONE");
-    }
+  if (PiSerial.available() <= 0) {
+    return;
   }
+
+  String msg = PiSerial.readStringUntil('\n');
+  msg.trim();
+
+  if (msg == "PING") {
+    PiSerial.println("PONG");
+    Serial.println("PONG");
+    return;
+  }
+
+  if (msg.startsWith("ECHO ")) {
+    String payload = msg.substring(5);
+    PiSerial.println(payload);
+    Serial.println(payload);
+    return;
+  }
+
+  if (msg.startsWith("GATE RUN ")) {
+    handleRunCommand(gateStepper, gateRunContinuous, parseValue(msg, 9));
+    return;
+  }
+  if (msg == "GATE STOP") {
+    handleStopCommand(gateStepper, gateRunContinuous);
+    return;
+  }
+  if (msg.startsWith("GATE SPEED ")) {
+    handleSpeedCommand(gateStepper, parseValue(msg, 11));
+    return;
+  }
+  if (msg.startsWith("GATE ACCEL ")) {
+    handleAccelCommand(gateStepper, parseValue(msg, 11));
+    return;
+  }
+  if (msg.startsWith("GATE STEPS ")) {
+    handleStepsCommand(gateStepper, gateRunContinuous, parseValue(msg, 11));
+    return;
+  }
+
+  if (msg.startsWith("RUN ")) {
+    handleRunCommand(primaryStepper, primaryRunContinuous, parseValue(msg, 4));
+    return;
+  }
+  if (msg == "STOP") {
+    handleStopCommand(primaryStepper, primaryRunContinuous);
+    return;
+  }
+  if (msg.startsWith("SPEED ")) {
+    handleSpeedCommand(primaryStepper, parseValue(msg, 6));
+    return;
+  }
+  if (msg.startsWith("ACCEL ")) {
+    handleAccelCommand(primaryStepper, parseValue(msg, 6));
+    return;
+  }
+  if (msg.startsWith("SETDIST ")) {
+    liftDistance = parseValue(msg, 8);
+    replyOk();
+    return;
+  }
+  if (msg.startsWith("STEPS ")) {
+    handleStepsCommand(primaryStepper, primaryRunContinuous, parseValue(msg, 6));
+    return;
+  }
+  if (msg == "MOVE") {
+    runBlockingMove(primaryStepper, primaryRunContinuous, liftDistance);
+    waitingRelease = true;
+    PiSerial.println("ARRIVED");
+    return;
+  }
+  if (msg == "RELEASE" && waitingRelease) {
+    runBlockingMove(primaryStepper, primaryRunContinuous, -liftDistance);
+    waitingRelease = false;
+    PiSerial.println("DONE");
+    return;
+  }
+
+  replyErr();
 }

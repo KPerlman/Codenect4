@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03g"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03h"
 
 
 class StartGameRequest(BaseModel):
@@ -33,6 +33,12 @@ class ManualHumanMoveRequest(BaseModel):
 
 
 class BeltStartRequest(BaseModel):
+    speed: int = 600
+    accel: int = 400
+    steps: int | None = None
+
+
+class GateStartRequest(BaseModel):
     speed: int = 600
     accel: int = 400
     steps: int | None = None
@@ -129,6 +135,16 @@ def api_start_belt(request: BeltStartRequest):
 @app.post("/api/belt/stop")
 def api_stop_belt():
     return controller.stop_belt()
+
+
+@app.post("/api/gate/start")
+def api_start_gate(request: GateStartRequest):
+    return controller.start_gate(speed=request.speed, accel=request.accel, steps=request.steps)
+
+
+@app.post("/api/gate/stop")
+def api_stop_gate():
+    return controller.stop_gate()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -381,6 +397,9 @@ PAGE_HTML = """
       gap: 8px;
       grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
     }
+    .controls.one-line {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
     .field-grid {
       display: grid;
       gap: 10px;
@@ -583,7 +602,7 @@ PAGE_HTML = """
 
         <div class="panel section">
           <div class="section-title">Sorting Controls</div>
-          <div class="controls">
+          <div class="controls one-line">
             <button class="ok" onclick="enableSorting()">Enable Sorting</button>
             <button class="secondary" onclick="disableSorting()">Disable Sorting</button>
             <button onclick="startSorterCalibration()">Start Sorter Calibration</button>
@@ -630,6 +649,28 @@ PAGE_HTML = """
           <div class="confirm-copy" id="beltStatusText">Belt idle.</div>
           <div class="controls">
             <button id="beltActionButton" class="ok" onclick="toggleBelt()">Start Belt</button>
+          </div>
+        </div>
+
+        <div class="panel section">
+          <div class="section-title">Gate Stepper</div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="gateSpeed">Speed</label>
+              <input id="gateSpeed" type="number" inputmode="numeric" value="600">
+            </div>
+            <div class="field">
+              <label for="gateAccel">Accel</label>
+              <input id="gateAccel" type="number" inputmode="numeric" value="400">
+            </div>
+            <div class="field">
+              <label for="gateSteps">Steps</label>
+              <input id="gateSteps" type="number" inputmode="numeric" value="1000">
+            </div>
+          </div>
+          <div class="confirm-copy" id="gateStatusText">Gate stepper idle.</div>
+          <div class="controls">
+            <button id="gateActionButton" class="ok" onclick="toggleGate()">Start Gate</button>
           </div>
         </div>
       </div>
@@ -704,6 +745,20 @@ PAGE_HTML = """
       const stepsValue = document.getElementById("beltSteps").value.trim();
       const steps = stepsValue === "" ? null : parseInt(stepsValue, 10);
       await api("/api/belt/start", "POST", { speed, accel, steps });
+      await refresh();
+    }
+
+    async function toggleGate() {
+      if (latestState && latestState.gate_running) {
+        await api("/api/gate/stop", "POST");
+        await refresh();
+        return;
+      }
+      const speed = parseInt(document.getElementById("gateSpeed").value || "600", 10);
+      const accel = parseInt(document.getElementById("gateAccel").value || "400", 10);
+      const stepsValue = document.getElementById("gateSteps").value.trim();
+      const steps = stepsValue === "" ? null : parseInt(stepsValue, 10);
+      await api("/api/gate/start", "POST", { speed, accel, steps });
       await refresh();
     }
 
@@ -959,6 +1014,30 @@ PAGE_HTML = """
       }
     }
 
+    function renderGatePanel(state) {
+      const status = document.getElementById("gateStatusText");
+      const button = document.getElementById("gateActionButton");
+      if (!status || !button) return;
+
+      if (state.gate_running) {
+        const modeText = state.gate_mode === "steps"
+          ? `Running ${state.gate_steps ?? "-"} steps at ${state.gate_speed} / accel ${state.gate_accel}.`
+          : `Running continuously at ${state.gate_speed} / accel ${state.gate_accel}.`;
+        status.textContent = modeText;
+        button.textContent = "Stop Gate";
+        button.className = "danger";
+      } else {
+        const detail = state.gate_error
+          ? ` Error: ${state.gate_error}`
+          : state.gate_status === "completed"
+            ? " Last step run completed."
+            : "";
+        status.textContent = `Gate ${state.gate_status || "idle"}.${detail}`;
+        button.textContent = "Start Gate";
+        button.className = "ok";
+      }
+    }
+
     function renderSorterCalibration(state) {
       const card = document.getElementById("sorterCalibrationCard");
       const title = document.getElementById("sorterCalibrationTitle");
@@ -1018,6 +1097,7 @@ PAGE_HTML = """
       renderMeta(latestState);
       renderStateBlocks(latestState);
       renderBeltPanel(latestState);
+      renderGatePanel(latestState);
       renderSorterCalibration(latestState);
       renderConfirmationCards(latestState);
       renderBoard(latestState.current_board);
