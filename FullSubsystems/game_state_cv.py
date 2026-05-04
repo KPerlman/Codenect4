@@ -31,6 +31,53 @@ def is_linux():
     return sys.platform.startswith("linux")
 
 
+def list_linux_video_sources():
+    if not is_linux():
+        return []
+    sources = []
+    for sysfs_entry in sorted(Path("/sys/class/video4linux").glob("video*"), key=lambda p: p.name):
+        dev_path = Path("/dev") / sysfs_entry.name
+        if dev_path.exists():
+            sources.append(str(dev_path))
+    return sources
+
+
+def linux_video_device_name(source):
+    if not (is_linux() and isinstance(source, str) and source.startswith("/dev/video")):
+        return None
+    video_name = Path(source).name
+    sysfs_name = Path("/sys/class/video4linux") / video_name / "name"
+    try:
+        return sysfs_name.read_text(encoding="utf-8").strip()
+    except Exception:
+        return None
+
+
+def choose_linux_camera_candidates():
+    candidates = list_linux_video_sources()
+    if not candidates:
+        return []
+
+    named_candidates = [(source, linux_video_device_name(source) or "") for source in candidates]
+
+    c920_candidates = [source for source, name in named_candidates if "HD Pro Webcam C920" in name]
+    if c920_candidates:
+        print(f"Restricting Linux camera scan to Logitech C920 nodes: {c920_candidates}")
+        return c920_candidates
+
+    filtered = []
+    for source, name in named_candidates:
+        lowered = name.lower()
+        if "bcm2835" in lowered or "codec" in lowered or "isp" in lowered:
+            continue
+        filtered.append(source)
+    if filtered:
+        print(f"Restricting Linux camera scan to external capture devices: {filtered}")
+        return filtered
+
+    return candidates
+
+
 def choose_camera(preferred_index=None, preferred_device=None, max_check=5, width=1280, height=720):
     if preferred_device is not None:
         return [preferred_device]
@@ -40,23 +87,36 @@ def choose_camera(preferred_index=None, preferred_device=None, max_check=5, widt
             return [f"/dev/video{preferred_index}"]
         return [preferred_index]
 
-    working_cams = list_available_cameras(max_check=max_check)
-    if not working_cams:
-        print("No cameras found during scan. Falling back to camera 0.")
-        return ["/dev/video0"] if is_linux() else [0]
+    if is_linux():
+        candidates = choose_linux_camera_candidates()
+        if not candidates:
+            print("No Linux video devices found. Falling back to /dev/video0.")
+            return ["/dev/video0"]
 
-    scored = []
-    for idx in working_cams:
-        source = f"/dev/video{idx}" if is_linux() else idx
-        score = probe_camera(source=source, width=width, height=height)
-        if score > 0:
-            scored.append((score, source))
+        scored = []
+        for source in candidates:
+            score = probe_camera(source=source, width=width, height=height)
+            if score > 0:
+                scored.append((score, source))
 
-    if not scored:
-        print(f"Cameras found: {working_cams}")
-        if is_linux():
-            return [f"/dev/video{idx}" for idx in working_cams]
-        return working_cams
+        if not scored:
+            print(f"Linux video devices found: {candidates}")
+            return candidates
+    else:
+        working_cams = list_available_cameras(max_check=max_check)
+        if not working_cams:
+            print("No cameras found during scan. Falling back to camera 0.")
+            return [0]
+
+        scored = []
+        for idx in working_cams:
+            score = probe_camera(source=idx, width=width, height=height)
+            if score > 0:
+                scored.append((score, idx))
+
+        if not scored:
+            print(f"Cameras found: {working_cams}")
+            return working_cams
 
     scored.sort(key=lambda item: (-item[0], item[1]))
     ordered = [source for _, source in scored]
@@ -461,9 +521,10 @@ def open_first_available_camera(candidates, width, height):
     last_error = None
     for source in candidates:
         cap = open_camera(source, width, height)
-        if cap.isOpened():
+        if cap.isOpened() and warmup_camera(cap):
             print(f"Using camera {source}. Press Ctrl+C to stop.")
             return cap, source
+        cap.release()
         last_error = RuntimeError(f"Could not open camera {source}")
     if last_error is not None:
         raise last_error
