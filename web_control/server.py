@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04k"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04l"
 
 
 class StartGameRequest(BaseModel):
@@ -941,7 +941,7 @@ PAGE_HTML = """
 
     async function startGame() {
       await syncBeltSettings();
-      await api("/api/game/start", "POST", { device: "/dev/video0", width: 640, height: 480, depth: 5, state_streak: 3 });
+      await api("/api/game/start", "POST", { width: 640, height: 480, depth: 5, state_streak: 3 });
       await refresh();
     }
 
@@ -960,7 +960,7 @@ PAGE_HTML = """
 
     async function resetGame() {
       await syncBeltSettings();
-      await api("/api/game/reset", "POST", { device: "/dev/video0", width: 640, height: 480, depth: 5, state_streak: 3 });
+      await api("/api/game/reset", "POST", { width: 640, height: 480, depth: 5, state_streak: 3 });
       await refresh();
     }
 
