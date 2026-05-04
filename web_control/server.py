@@ -38,6 +38,18 @@ class BeltStartRequest(BaseModel):
     steps: int | None = None
 
 
+class BeltSettingsRequest(BaseModel):
+    speed: int = 600
+    accel: int = 400
+    steps: int | None = None
+    clear_thresh: float | None = None
+    post_detect_steps: int | None = None
+
+
+class BeltCalibrationActionRequest(BaseModel):
+    action: str
+
+
 class GateStartRequest(BaseModel):
     speed: int = 600
     accel: int = 400
@@ -135,6 +147,27 @@ def api_start_belt(request: BeltStartRequest):
 @app.post("/api/belt/stop")
 def api_stop_belt():
     return controller.stop_belt()
+
+
+@app.post("/api/belt/settings")
+def api_belt_settings(request: BeltSettingsRequest):
+    return controller.update_belt_settings(
+        speed=request.speed,
+        accel=request.accel,
+        steps=request.steps,
+        clear_thresh=request.clear_thresh,
+        post_detect_steps=request.post_detect_steps,
+    )
+
+
+@app.post("/api/belt/calibration/start")
+def api_start_belt_calibration():
+    return controller.start_belt_calibration()
+
+
+@app.post("/api/belt/calibration/action")
+def api_belt_calibration_action(request: BeltCalibrationActionRequest):
+    return controller.submit_belt_calibration_action(request.action)
 
 
 @app.post("/api/gate/start")
@@ -646,9 +679,37 @@ PAGE_HTML = """
               <input id="beltSteps" type="number" inputmode="numeric">
             </div>
           </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="beltClearThresh">Clear Threshold</label>
+              <input id="beltClearThresh" type="number" inputmode="decimal" value="2500">
+            </div>
+            <div class="field">
+              <label for="beltPostDetectSteps">Post-Detect Steps</label>
+              <input id="beltPostDetectSteps" type="number" inputmode="numeric" value="1000">
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button class="secondary" onclick="startBeltCalibration()">Calibrate Belt TCS</button>
+            </div>
+          </div>
           <div class="confirm-copy" id="beltStatusText">Belt idle.</div>
           <div class="controls">
             <button id="beltActionButton" class="ok" onclick="toggleBelt()">Start Belt</button>
+          </div>
+        </div>
+
+        <div id="beltCalibrationCard" class="panel confirm-panel hidden">
+          <div class="section-title">Belt Calibration</div>
+          <div class="confirm-title">Clear threshold calibration</div>
+          <div id="beltCalibrationCopy" class="confirm-copy">Capture empty and covered-piece samples to suggest a clear threshold.</div>
+          <div id="beltCalibrationSample" class="confirm-copy">No sample yet.</div>
+          <div id="beltCalibrationCounts" class="confirm-copy">empty 0 | piece 0</div>
+          <div class="controls">
+            <button id="beltCaptureEmpty" class="secondary" onclick="beltCalibrationAction('empty')">Capture Empty</button>
+            <button id="beltCapturePiece" class="warning" onclick="beltCalibrationAction('piece')">Capture Piece</button>
+            <button id="beltFinishCalibration" class="ok" onclick="beltCalibrationAction('finish')">Finish</button>
+            <button id="beltCancelCalibration" class="danger" onclick="beltCalibrationAction('cancel')">Cancel</button>
           </div>
         </div>
 
@@ -695,6 +756,7 @@ PAGE_HTML = """
     }
 
     async function startGame() {
+      await syncBeltSettings();
       await api("/api/game/start", "POST", { device: "/dev/video0", width: 640, height: 480, depth: 5, state_streak: 3 });
       await refresh();
     }
@@ -705,6 +767,7 @@ PAGE_HTML = """
     }
 
     async function resetGame() {
+      await syncBeltSettings();
       await api("/api/game/reset", "POST", { device: "/dev/video0", width: 640, height: 480, depth: 5, state_streak: 3 });
       await refresh();
     }
@@ -734,7 +797,20 @@ PAGE_HTML = """
       await refresh();
     }
 
+    async function syncBeltSettings() {
+      const speed = parseInt(document.getElementById("beltSpeed").value || "600", 10);
+      const accel = parseInt(document.getElementById("beltAccel").value || "400", 10);
+      const stepsValue = document.getElementById("beltSteps").value.trim();
+      const clearThreshValue = document.getElementById("beltClearThresh").value.trim();
+      const postDetectValue = document.getElementById("beltPostDetectSteps").value.trim();
+      const steps = stepsValue === "" ? null : parseInt(stepsValue, 10);
+      const clear_thresh = clearThreshValue === "" ? null : parseFloat(clearThreshValue);
+      const post_detect_steps = postDetectValue === "" ? null : parseInt(postDetectValue, 10);
+      await api("/api/belt/settings", "POST", { speed, accel, steps, clear_thresh, post_detect_steps });
+    }
+
     async function toggleBelt() {
+      await syncBeltSettings();
       if (latestState && latestState.belt_running) {
         await api("/api/belt/stop", "POST");
         await refresh();
@@ -745,6 +821,17 @@ PAGE_HTML = """
       const stepsValue = document.getElementById("beltSteps").value.trim();
       const steps = stepsValue === "" ? null : parseInt(stepsValue, 10);
       await api("/api/belt/start", "POST", { speed, accel, steps });
+      await refresh();
+    }
+
+    async function startBeltCalibration() {
+      await syncBeltSettings();
+      await api("/api/belt/calibration/start", "POST");
+      await refresh();
+    }
+
+    async function beltCalibrationAction(action) {
+      await api("/api/belt/calibration/action", "POST", { action });
       await refresh();
     }
 
@@ -995,6 +1082,15 @@ PAGE_HTML = """
       const button = document.getElementById("beltActionButton");
       if (!status || !button) return;
 
+      const clearInput = document.getElementById("beltClearThresh");
+      const postDetectInput = document.getElementById("beltPostDetectSteps");
+      if (clearInput && document.activeElement !== clearInput && state.belt_clear_thresh !== undefined) {
+        clearInput.value = Number(state.belt_clear_thresh).toFixed(1);
+      }
+      if (postDetectInput && document.activeElement !== postDetectInput && state.belt_post_detect_steps !== undefined) {
+        postDetectInput.value = `${state.belt_post_detect_steps}`;
+      }
+
       if (state.belt_running) {
         const modeText = state.belt_mode === "steps"
           ? `Running ${state.belt_steps ?? "-"} steps at ${state.belt_speed} / accel ${state.belt_accel}.`
@@ -1012,6 +1108,37 @@ PAGE_HTML = """
         button.textContent = "Start Belt";
         button.className = "ok";
       }
+    }
+
+    function renderBeltCalibration(state) {
+      const card = document.getElementById("beltCalibrationCard");
+      const copy = document.getElementById("beltCalibrationCopy");
+      const sample = document.getElementById("beltCalibrationSample");
+      const counts = document.getElementById("beltCalibrationCounts");
+      const emptyBtn = document.getElementById("beltCaptureEmpty");
+      const pieceBtn = document.getElementById("beltCapturePiece");
+      const finishBtn = document.getElementById("beltFinishCalibration");
+      const cancelBtn = document.getElementById("beltCancelCalibration");
+
+      const active = !!state.belt_calibration_running;
+      card.classList.toggle("hidden", !active);
+      if (!active) {
+        return;
+      }
+
+      copy.textContent = state.belt_calibration_prompt || "Capture empty and covered-piece samples.";
+      if (state.belt_calibration_last_sample) {
+        const s = state.belt_calibration_last_sample;
+        sample.textContent = `Sample r=${s.r.toFixed(1)} g=${s.g.toFixed(1)} b=${s.b.toFixed(1)} clear=${s.clear.toFixed(1)}`;
+      } else {
+        sample.textContent = "No sample yet.";
+      }
+      const c = state.belt_calibration_counts || { empty: 0, piece: 0 };
+      counts.textContent = `empty ${c.empty ?? 0} | piece ${c.piece ?? 0}`;
+      emptyBtn.disabled = !active;
+      pieceBtn.disabled = !active;
+      finishBtn.disabled = !active;
+      cancelBtn.disabled = !active;
     }
 
     function renderGatePanel(state) {
@@ -1097,6 +1224,7 @@ PAGE_HTML = """
       renderMeta(latestState);
       renderStateBlocks(latestState);
       renderBeltPanel(latestState);
+      renderBeltCalibration(latestState);
       renderGatePanel(latestState);
       renderSorterCalibration(latestState);
       renderConfirmationCards(latestState);
@@ -1112,6 +1240,15 @@ PAGE_HTML = """
         document.getElementById("versionBadge").textContent = "service health unavailable";
       }
     }
+
+    ["beltSpeed", "beltAccel", "beltSteps", "beltClearThresh", "beltPostDetectSteps"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener("change", () => {
+          syncBeltSettings().catch(() => {});
+        });
+      }
+    });
 
     refreshHealth();
     refresh();

@@ -34,6 +34,8 @@ GATE_PORT = "/dev/serial0"
 GATE_DEFAULT_SPEED = 600
 GATE_DEFAULT_ACCEL = 400
 GATE_DEFAULT_STEPS = 1000
+BELT_CLEAR_THRESH = 2500.0
+BELT_POST_DETECT_STEPS = 1000
 
 
 def move_servo_zero_position(pca, channel, angle, max_angle=180, offset=0):
@@ -105,6 +107,15 @@ class SharedState:
     belt_accel: int = 400
     belt_steps: int | None = None
     belt_error: str | None = None
+    belt_clear_thresh: float = BELT_CLEAR_THRESH
+    belt_detect_mode: str = "below"
+    belt_post_detect_steps: int = BELT_POST_DETECT_STEPS
+    belt_calibration_running: bool = False
+    belt_calibration_prompt: str | None = None
+    belt_calibration_last_sample: dict[str, float] | None = None
+    belt_calibration_counts: dict[str, int] = field(
+        default_factory=lambda: {"empty": 0, "piece": 0}
+    )
     gate_running: bool = False
     gate_status: str = "idle"
     gate_mode: str = "steps"
@@ -149,6 +160,13 @@ class SharedState:
             "belt_accel": self.belt_accel,
             "belt_steps": self.belt_steps,
             "belt_error": self.belt_error,
+            "belt_clear_thresh": self.belt_clear_thresh,
+            "belt_detect_mode": self.belt_detect_mode,
+            "belt_post_detect_steps": self.belt_post_detect_steps,
+            "belt_calibration_running": self.belt_calibration_running,
+            "belt_calibration_prompt": self.belt_calibration_prompt,
+            "belt_calibration_last_sample": self.belt_calibration_last_sample,
+            "belt_calibration_counts": self.belt_calibration_counts,
             "gate_running": self.gate_running,
             "gate_status": self.gate_status,
             "gate_mode": self.gate_mode,
@@ -175,9 +193,28 @@ class RobotWebController:
         self._sorter_calibration_commands = None
         self._belt_thread = None
         self._belt_stop_event = None
+        self._belt_calibration_sensor = None
+        self._belt_calibration_empty_samples = []
+        self._belt_calibration_piece_samples = []
         self._gate_thread = None
         self._gate_stop_event = None
         self._gate_is_out = False
+
+    def _read_belt_color_sample(self, sensor, count=8, delay_s=0.04):
+        r_total = g_total = b_total = c_total = 0.0
+        for _ in range(count):
+            r, g, b, clear = sensor.color_raw
+            r_total += r
+            g_total += g
+            b_total += b
+            c_total += clear
+            time.sleep(delay_s)
+        return {
+            "r": r_total / count,
+            "g": g_total / count,
+            "b": b_total / count,
+            "clear": c_total / count,
+        }
 
     def start_belt(self, speed=600, accel=400, steps=None):
         with self._lock:
@@ -222,6 +259,136 @@ class RobotWebController:
             belt_status="stopped",
             message="Belt stopped",
         )
+        return self.get_state()
+
+    def update_belt_settings(self, speed=None, accel=None, steps=None, clear_thresh=None, post_detect_steps=None):
+        changes = {}
+        if speed is not None:
+            changes["belt_speed"] = int(speed)
+        if accel is not None:
+            changes["belt_accel"] = int(accel)
+        changes["belt_steps"] = None if steps is None else int(steps)
+        if clear_thresh is not None:
+            changes["belt_clear_thresh"] = float(clear_thresh)
+        if post_detect_steps is not None:
+            changes["belt_post_detect_steps"] = int(post_detect_steps)
+        if changes:
+            self._update_state(**changes)
+        return self.get_state()
+
+    def start_belt_calibration(self):
+        try:
+            from FullSubsystems.belt import open_belt_tcs34725
+
+            sensor = open_belt_tcs34725(integration_time_ms=100, gain=4)
+        except Exception as exc:
+            self._update_state(
+                belt_calibration_running=False,
+                belt_calibration_prompt=f"Failed to open belt sensor: {exc}",
+                belt_calibration_last_sample=None,
+                message="Belt calibration failed",
+                error=str(exc),
+            )
+            return self.get_state()
+
+        with self._lock:
+            self._belt_calibration_sensor = sensor
+            self._belt_calibration_empty_samples = []
+            self._belt_calibration_piece_samples = []
+
+        self._update_state(
+            belt_calibration_running=True,
+            belt_calibration_prompt="Capture empty and piece-covered samples, then finish calibration.",
+            belt_calibration_last_sample=None,
+            belt_calibration_counts={"empty": 0, "piece": 0},
+            message="Belt calibration active",
+            error=None,
+        )
+        return self.get_state()
+
+    def submit_belt_calibration_action(self, action):
+        sensor = None
+        with self._lock:
+            sensor = self._belt_calibration_sensor
+
+        if action == "cancel":
+            with self._lock:
+                self._belt_calibration_sensor = None
+                self._belt_calibration_empty_samples = []
+                self._belt_calibration_piece_samples = []
+            self._update_state(
+                belt_calibration_running=False,
+                belt_calibration_prompt="Belt calibration cancelled.",
+                belt_calibration_last_sample=None,
+                message="Belt calibration cancelled",
+            )
+            return self.get_state()
+
+        if sensor is None:
+            return self.get_state()
+
+        if action in {"empty", "piece"}:
+            sample = self._read_belt_color_sample(sensor)
+            with self._lock:
+                if action == "empty":
+                    self._belt_calibration_empty_samples.append(sample)
+                else:
+                    self._belt_calibration_piece_samples.append(sample)
+                empty_count = len(self._belt_calibration_empty_samples)
+                piece_count = len(self._belt_calibration_piece_samples)
+            self._update_state(
+                belt_calibration_running=True,
+                belt_calibration_last_sample=sample,
+                belt_calibration_counts={"empty": empty_count, "piece": piece_count},
+                belt_calibration_prompt="Capture more samples or finish calibration.",
+                message=f"Captured belt {action} sample",
+                error=None,
+            )
+            return self.get_state()
+
+        if action == "finish":
+            with self._lock:
+                empty_samples = list(self._belt_calibration_empty_samples)
+                piece_samples = list(self._belt_calibration_piece_samples)
+                self._belt_calibration_sensor = None
+                self._belt_calibration_empty_samples = []
+                self._belt_calibration_piece_samples = []
+
+            if not empty_samples or not piece_samples:
+                self._update_state(
+                    belt_calibration_running=False,
+                    belt_calibration_prompt="Need at least one empty sample and one piece sample.",
+                    message="Belt calibration incomplete",
+                )
+                return self.get_state()
+
+            piece_clear_values = [sample["clear"] for sample in piece_samples]
+            empty_clear_values = [sample["clear"] for sample in empty_samples]
+            piece_avg = sum(piece_clear_values) / len(piece_clear_values)
+            empty_avg = sum(empty_clear_values) / len(empty_clear_values)
+            piece_is_lower = piece_avg < empty_avg
+
+            if piece_is_lower:
+                clear_thresh = (max(piece_clear_values) + min(empty_clear_values)) / 2.0
+                detect_mode = "below"
+            else:
+                clear_thresh = (min(piece_clear_values) + max(empty_clear_values)) / 2.0
+                detect_mode = "above"
+
+            self._update_state(
+                belt_calibration_running=False,
+                belt_calibration_prompt=(
+                    f"Calibration complete. Suggested clear threshold {clear_thresh:.1f} "
+                    f"(detect piece when clear is {detect_mode} threshold)."
+                ),
+                belt_clear_thresh=clear_thresh,
+                belt_detect_mode=detect_mode,
+                belt_calibration_counts={"empty": len(empty_samples), "piece": len(piece_samples)},
+                message=f"Belt calibration complete. Suggested clear threshold {clear_thresh:.1f}",
+                error=None,
+            )
+            return self.get_state()
+
         return self.get_state()
 
     def start_gate(self, speed=GATE_DEFAULT_SPEED, accel=GATE_DEFAULT_ACCEL, steps=None):
@@ -536,6 +703,22 @@ class GameLoopWorker:
             pending_yellow_count=0,
         )
 
+    def _read_belt_color_sample(self, sensor, count=8, delay_s=0.04):
+        r_total = g_total = b_total = c_total = 0.0
+        for _ in range(count):
+            r, g, b, clear = sensor.color_raw
+            r_total += r
+            g_total += g
+            b_total += b
+            c_total += clear
+            time.sleep(delay_s)
+        return {
+            "r": r_total / count,
+            "g": g_total / count,
+            "b": b_total / count,
+            "clear": c_total / count,
+        }
+
     def _drain_commands(self):
         commands = []
         while True:
@@ -758,6 +941,89 @@ class GameLoopWorker:
         with self.controller._lock:
             self.controller._gate_is_out = False
         self.controller._update_state(message="Clear gate returned to position")
+
+    def _deliver_red_piece_with_belt(self):
+        from FullSubsystems.belt import open_belt_tcs34725
+        import serial
+
+        state = self.controller.get_state()
+        speed = int(state["belt_speed"])
+        accel = int(state["belt_accel"])
+        clear_thresh = float(state["belt_clear_thresh"])
+        detect_mode = state["belt_detect_mode"]
+        post_steps = int(state["belt_post_detect_steps"])
+
+        sensor = open_belt_tcs34725(integration_time_ms=100, gain=4)
+        detect_streak = 0
+        deadline = time.time() + 12.0
+
+        self.controller._update_state(
+            belt_running=True,
+            belt_status="running",
+            belt_mode="continuous",
+            belt_error=None,
+            message="Feeding red piece with belt",
+        )
+
+        with self.controller._arduino_lock:
+            arduino = serial.Serial(GATE_PORT, 9600, timeout=1)
+            try:
+                time.sleep(2)
+                arduino.reset_input_buffer()
+                arduino.reset_output_buffer()
+                self._sync_serial_controller(arduino)
+                self._send_serial_cmd(arduino, f"SPEED {speed}", {"OK", "ERR"})
+                self._send_serial_cmd(arduino, f"ACCEL {accel}", {"OK", "ERR"})
+                self._send_serial_cmd(arduino, f"RUN {speed}", {"OK", "ERR"})
+
+                while not self.stop_event.is_set():
+                    sample = self._read_belt_color_sample(sensor, count=4, delay_s=0.03)
+                    clear_value = sample["clear"]
+                    covered = (
+                        clear_value <= clear_thresh
+                        if detect_mode == "below"
+                        else clear_value >= clear_thresh
+                    )
+                    if covered:
+                        detect_streak += 1
+                    else:
+                        detect_streak = 0
+
+                    self.controller._update_state(
+                        belt_running=True,
+                        belt_status="running",
+                        belt_mode="continuous",
+                        message=(
+                            f"Waiting for belt piece detect (clear={clear_value:.1f}, "
+                            f"threshold={clear_thresh:.1f}, mode={detect_mode})"
+                        ),
+                    )
+
+                    if detect_streak >= 2:
+                        self._send_serial_cmd(arduino, "STOP", {"OK"}, timeout_s=2.0)
+                        self._send_serial_cmd(arduino, f"STEPS {post_steps}", {"DONE"}, timeout_s=12.0)
+                        self.controller._update_state(
+                            belt_running=False,
+                            belt_status="completed",
+                            belt_mode="steps",
+                            belt_error=None,
+                            message=(
+                                f"Belt detected a piece at clear={clear_value:.1f} "
+                                f"and advanced {post_steps} more steps"
+                            ),
+                        )
+                        return
+
+                    if time.time() > deadline:
+                        raise TimeoutError(
+                            f"Belt sensor did not detect a covered piece before timeout "
+                            f"(threshold={clear_thresh:.1f}, mode={detect_mode})"
+                        )
+            finally:
+                try:
+                    arduino.close()
+                except Exception:
+                    pass
 
     def _complete_game(self, message, confirmed_board, winner=0):
         sorted_target = int(np.count_nonzero(confirmed_board != 0)) + 5
@@ -1000,6 +1266,7 @@ class GameLoopWorker:
                     active_drop_servo_channel,
                     visible_red_col,
                 )
+                self._deliver_red_piece_with_belt()
                 maybe_red_board = self._await_red_confirmation(
                     cap,
                     tracker,
