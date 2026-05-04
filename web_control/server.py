@@ -62,6 +62,10 @@ class BeltCalibrationActionRequest(BaseModel):
     action: str
 
 
+class BeltReadyConfirmRequest(BaseModel):
+    accept: bool = True
+
+
 class GateStartRequest(BaseModel):
     speed: int = 600
     accel: int = 400
@@ -212,6 +216,11 @@ def api_continue_belt_test():
 @app.post("/api/belt/test/stop")
 def api_stop_belt_test():
     return controller.stop_belt_test()
+
+
+@app.post("/api/belt/ready-confirm")
+def api_belt_ready_confirm(request: BeltReadyConfirmRequest):
+    return controller.set_belt_ready_confirmation(accept=request.accept)
 
 
 @app.post("/api/gate/start")
@@ -786,6 +795,10 @@ PAGE_HTML = """
             <button id="beltTestButton" class="secondary" onclick="toggleBeltTest()">Test Belt Calibration</button>
             <button id="beltTestContinueButton" class="warning" onclick="continueBeltTest()">Continue</button>
           </div>
+          <div class="controls spaced-top">
+            <button id="beltReadyConfirmButton" class="ok" onclick="confirmBeltReady(true)">Confirm Ready</button>
+            <button id="beltReadyRejectButton" class="secondary" onclick="confirmBeltReady(false)">False Positive</button>
+          </div>
           <div class="confirm-copy" id="beltStatusText">Belt idle.</div>
           <div class="controls">
             <button id="beltActionButton" class="ok" onclick="toggleBelt()">Start Belt</button>
@@ -994,6 +1007,11 @@ PAGE_HTML = """
 
     async function continueBeltTest() {
       await api("/api/belt/test/continue", "POST");
+      await refresh();
+    }
+
+    async function confirmBeltReady(accept) {
+      await api("/api/belt/ready-confirm", "POST", { accept });
       await refresh();
     }
 
@@ -1284,6 +1302,8 @@ PAGE_HTML = """
       const modeButton = document.getElementById("gameBeltModeButton");
       const testButton = document.getElementById("beltTestButton");
       const continueButton = document.getElementById("beltTestContinueButton");
+      const readyConfirmButton = document.getElementById("beltReadyConfirmButton");
+      const readyRejectButton = document.getElementById("beltReadyRejectButton");
       if (!status || !button) return;
 
       const clearInput = document.getElementById("beltClearThresh");
@@ -1330,6 +1350,12 @@ PAGE_HTML = """
       if (continueButton) {
         continueButton.disabled = !state.belt_test_running || !state.belt_test_waiting_continue;
       }
+      if (readyConfirmButton) {
+        readyConfirmButton.disabled = !(state.belt_status === "ready" && !state.belt_ready_confirmed);
+      }
+      if (readyRejectButton) {
+        readyRejectButton.disabled = state.belt_status !== "ready";
+      }
 
       if (state.belt_test_running) {
         status.textContent = state.belt_test_prompt || "Belt calibration test running.";
@@ -1347,6 +1373,12 @@ PAGE_HTML = """
         status.textContent = modeText;
         button.textContent = "Stop Belt";
         button.className = "danger";
+      } else if (state.belt_status === "ready") {
+        status.textContent = state.belt_ready_confirmed
+          ? "Belt piece ready and confirmed for launch."
+          : "Belt piece ready at the sensor. Confirm it or reject it as a false positive.";
+        button.textContent = "Start Belt";
+        button.className = "ok";
       } else {
         const detail = state.belt_error
           ? ` Error: ${state.belt_error}`

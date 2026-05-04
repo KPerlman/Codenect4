@@ -135,6 +135,8 @@ class SharedState:
     belt_test_running: bool = False
     belt_test_waiting_continue: bool = False
     belt_test_prompt: str | None = None
+    belt_piece_ready: bool = False
+    belt_ready_confirmed: bool = False
     gate_running: bool = False
     gate_status: str = "idle"
     gate_mode: str = "steps"
@@ -197,6 +199,8 @@ class SharedState:
             "belt_test_running": self.belt_test_running,
             "belt_test_waiting_continue": self.belt_test_waiting_continue,
             "belt_test_prompt": self.belt_test_prompt,
+            "belt_piece_ready": self.belt_piece_ready,
+            "belt_ready_confirmed": self.belt_ready_confirmed,
             "gate_running": self.gate_running,
             "gate_status": self.gate_status,
             "gate_mode": self.gate_mode,
@@ -295,6 +299,16 @@ class RobotWebController:
             belt_status="stopped",
             message="Belt stopped",
         )
+        return self.get_state()
+
+    def set_belt_ready_confirmation(self, accept=True):
+        with self._lock:
+            if self._game_thread and self._game_thread.is_alive() and self._belt_feeder is not None:
+                self._belt_feeder.confirm_ready(accept=accept)
+                self._update_state(
+                    belt_ready_confirmed=bool(accept),
+                    message="Confirmed staged belt piece" if accept else "Rejected staged belt piece; resuming search",
+                )
         return self.get_state()
 
     def start_belt_test(self):
@@ -1537,6 +1551,15 @@ class GameLoopWorker:
                 recovery_cycles = 0
                 _, _, _ = tracker.process_frame(frame)
                 board_copy = np.copy(tracker.board_state)
+                display_board_copy = np.copy(board_copy)
+                if confirmed_board is not None:
+                    state_view = self.controller.get_state()
+                    if (
+                        state_view["game_status"] == "thinking"
+                        or state_view["awaiting_confirmation"] == "red"
+                        or str(state_view["turn_state"]).startswith("robot_")
+                    ):
+                        display_board_copy = self._sanitize_robot_turn_board(confirmed_board, board_copy)
 
                 if boards_equal(board_copy, last_seen_board):
                     stable_streak += 1
@@ -1550,11 +1573,11 @@ class GameLoopWorker:
                 self.controller._update_state(
                     tracker_active=tracker.is_board_active,
                     tracker_calibrated=tracker.is_calibrated,
-                    current_board=board_to_lists(board_copy),
+                    current_board=board_to_lists(display_board_copy),
                     winner=tracker.winner,
                     pending_yellow_count=max(
                         0,
-                        int(np.count_nonzero(board_copy == 2))
+                        int(np.count_nonzero(display_board_copy == 2))
                         - int(np.count_nonzero(np.asarray(confirmed_board) == 2)) if confirmed_board is not None else 0,
                     ),
                 )
@@ -1778,6 +1801,7 @@ class GameLoopBeltFeeder:
         self._launch_done = threading.Event()
         self._launch_error = None
         self._paused = False
+        self._ready_confirmed = False
 
     def start(self):
         if self.thread and self.thread.is_alive():
@@ -1796,6 +1820,9 @@ class GameLoopBeltFeeder:
 
     def resume(self):
         self.commands.put({"type": "resume"})
+
+    def confirm_ready(self, accept=True):
+        self.commands.put({"type": "confirm_ready" if accept else "reject_ready"})
 
     def launch_piece(self, launch_speed, launch_accel, launch_steps, timeout_s=20.0):
         self._launch_error = None
@@ -1903,6 +1930,21 @@ class GameLoopBeltFeeder:
                             self.controller._update_state(
                                 message="Launch requested; waiting for staged red piece",
                             )
+                        elif command_type == "confirm_ready":
+                            self._ready_confirmed = True
+                            self.controller._update_state(
+                                belt_ready_confirmed=True,
+                                message="Confirmed staged belt piece",
+                            )
+                        elif command_type == "reject_ready":
+                            self._ready_confirmed = False
+                            piece_staged = False
+                            detect_streak = 0
+                            self.controller._update_state(
+                                belt_piece_ready=False,
+                                belt_ready_confirmed=False,
+                                message="Rejected staged belt piece; resuming slow feed",
+                            )
 
                     if self.stop_event.is_set() or self.parent_stop_event.is_set():
                         break
@@ -1910,18 +1952,24 @@ class GameLoopBeltFeeder:
                         time.sleep(0.05)
                         continue
 
-                    if piece_staged and pending_launch is None:
+                    if piece_staged and not self._ready_confirmed:
                         self.controller._update_state(
                             belt_running=False,
                             belt_status="ready",
                             belt_mode="continuous",
                             belt_speed=BELT_STAGE_SPEED,
-                            message="Red piece staged at sensor and ready for launch",
+                            belt_piece_ready=True,
+                            belt_ready_confirmed=False,
+                            message=(
+                                "Launch waiting for staged-piece confirmation."
+                                if pending_launch is not None
+                                else "Red piece staged at sensor. Confirm it or reject it as a false positive."
+                            ),
                         )
                         time.sleep(0.02)
                         continue
 
-                    if piece_staged and pending_launch is not None:
+                    if piece_staged and pending_launch is not None and self._ready_confirmed:
                         launch_speed = int(pending_launch["launch_speed"])
                         launch_accel = int(pending_launch["launch_accel"])
                         launch_steps = int(pending_launch["launch_steps"])
@@ -1934,6 +1982,8 @@ class GameLoopBeltFeeder:
                             belt_speed=launch_speed,
                             belt_accel=launch_accel,
                             belt_steps=launch_steps,
+                            belt_piece_ready=False,
+                            belt_ready_confirmed=True,
                             message=(
                                 f"Launching red piece at {launch_speed} speed, {launch_accel} accel, "
                                 f"{launch_steps} steps"
@@ -1951,6 +2001,7 @@ class GameLoopBeltFeeder:
                         )
                         pending_launch = None
                         piece_staged = False
+                        self._ready_confirmed = False
                         detect_streak = 0
                         self._launch_error = None
                         self._launch_done.set()
@@ -1985,6 +2036,11 @@ class GameLoopBeltFeeder:
                             self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0, attempts=1)
                             stage_running = False
                         piece_staged = True
+                        self._ready_confirmed = False
+                        self.controller._update_state(
+                            belt_piece_ready=True,
+                            belt_ready_confirmed=False,
+                        )
                         time.sleep(0.02)
                         continue
 
@@ -2000,6 +2056,8 @@ class GameLoopBeltFeeder:
                         belt_mode="continuous",
                         belt_speed=BELT_STAGE_SPEED,
                         belt_accel=int(state["belt_accel"]),
+                        belt_piece_ready=False,
+                        belt_ready_confirmed=False,
                         belt_error=None,
                         message=(
                             "No staged red piece yet; feeding slowly toward the sensor"
@@ -2013,6 +2071,8 @@ class GameLoopBeltFeeder:
             self.controller._update_state(
                 belt_running=False,
                 belt_status="error",
+                belt_piece_ready=False,
+                belt_ready_confirmed=False,
                 belt_error=str(exc),
                 message="Game belt feeder failed",
                 error=str(exc),
