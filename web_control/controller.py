@@ -2202,6 +2202,8 @@ class GameLoopBeltFeeder:
         sensor = None
         stage_running = False
         detect_streak = 0
+        clear_rearm_streak = 0
+        require_clear_rearm = False
         pending_launch = None
         piece_staged = False
         try:
@@ -2267,6 +2269,8 @@ class GameLoopBeltFeeder:
                             self._ready_confirmed = False
                             piece_staged = False
                             detect_streak = 0
+                            clear_rearm_streak = 0
+                            require_clear_rearm = True
                             self.controller._update_state(
                                 belt_piece_ready=False,
                                 belt_ready_confirmed=False,
@@ -2383,6 +2387,37 @@ class GameLoopBeltFeeder:
                         if detect_mode == "below"
                         else clear_value >= clear_thresh
                     )
+
+                    if require_clear_rearm:
+                        if covered:
+                            clear_rearm_streak = 0
+                            detect_streak = 0
+                        else:
+                            clear_rearm_streak += 1
+                            if clear_rearm_streak >= max(2, detect_streak_target):
+                                require_clear_rearm = False
+                                clear_rearm_streak = 0
+                                self.controller.log_event(
+                                    "Belt sensor cleared after rejected staged piece; stage detection re-armed"
+                                )
+                        self.controller._update_state(
+                            belt_running=stage_running,
+                            belt_status="staging" if stage_running else "starting",
+                            belt_mode="continuous",
+                            belt_speed=BELT_STAGE_SPEED,
+                            belt_accel=int(state["belt_accel"]),
+                            belt_piece_ready=False,
+                            belt_ready_confirmed=False,
+                            belt_error=None,
+                            message=(
+                                "Rejected staged piece still near the sensor; feeding until the sensor clears"
+                                if pending_launch is None
+                                else "Launch pending; feeding until the rejected staged piece fully clears the sensor"
+                            ),
+                        )
+                        time.sleep(0.02)
+                        continue
+
                     if covered:
                         detect_streak += 1
                     else:
