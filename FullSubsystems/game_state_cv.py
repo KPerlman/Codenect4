@@ -492,6 +492,13 @@ def open_camera(source, width, height):
     return cap
 
 
+def safe_read_frame(cap):
+    try:
+        return cap.read()
+    except cv2.error:
+        return False, None
+
+
 def probe_camera(source, width, height, attempts=5, required_successes=3):
     cap = open_camera(source, width, height)
     if not cap.isOpened():
@@ -501,7 +508,7 @@ def probe_camera(source, width, height, attempts=5, required_successes=3):
     try:
         time.sleep(0.2)
         for _ in range(attempts):
-            ret, _ = cap.read()
+            ret, _ = safe_read_frame(cap)
             if ret:
                 successes += 1
             time.sleep(0.05)
@@ -533,7 +540,7 @@ def open_first_available_camera(candidates, width, height):
 
 def warmup_camera(cap, frames=5):
     for _ in range(frames):
-        ret, _ = cap.read()
+        ret, _ = safe_read_frame(cap)
         if not ret:
             return False
         time.sleep(0.05)
@@ -724,7 +731,7 @@ def main():
 
     try:
         while True:
-            ret, frame = cap.read()
+            ret, frame = safe_read_frame(cap)
             if not ret:
                 failed_reads += 1
                 if failed_reads < args.read_retries:

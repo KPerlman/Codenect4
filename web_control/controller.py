@@ -22,6 +22,7 @@ from FullSubsystems.game_state_cv import (
     legal_human_transition,
     open_first_available_camera,
     reopen_camera,
+    safe_read_frame,
     user_visible_column,
     warmup_camera,
 )
@@ -1690,7 +1691,7 @@ class GameLoopWorker:
                     time.sleep(0.05)
                     continue
 
-                ret, frame = cap.read()
+                ret, frame = safe_read_frame(cap)
                 if not ret:
                     failed_reads += 1
                     read_failure_threshold = 10 if tracker.is_board_active and not tracker.is_calibrated else 5
