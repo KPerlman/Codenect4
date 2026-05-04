@@ -1554,7 +1554,13 @@ class GameLoopWorker:
 
     def _sync_belt_feeder_mode(self):
         desired = bool(self.controller.get_state()["game_belt_enabled"])
-        if desired and self._belt_feeder is None:
+        feeder_dead = (
+            self._belt_feeder is not None
+            and (self._belt_feeder.thread is None or not self._belt_feeder.thread.is_alive())
+        )
+        if desired and (self._belt_feeder is None or feeder_dead):
+            if self._belt_feeder is not None:
+                self._belt_feeder.stop()
             feeder = GameLoopBeltFeeder(self.controller, self.stop_event)
             feeder.start()
             self._belt_feeder = feeder
@@ -2017,17 +2023,20 @@ class GameLoopBeltFeeder:
         self._paused = False
         self._ready_confirmed = False
         self._session_ready = threading.Event()
+        self._staging_ready = threading.Event()
 
     def start(self):
         if self.thread and self.thread.is_alive():
             return
         self._session_ready.clear()
+        self._staging_ready.clear()
         self.thread = threading.Thread(target=self.run, daemon=True, name="game-belt-feeder")
         self.thread.start()
 
     def stop(self):
         self.stop_event.set()
         self._session_ready.set()
+        self._staging_ready.set()
         self.commands.put({"type": "stop"})
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=3.0)
@@ -2060,8 +2069,8 @@ class GameLoopBeltFeeder:
     def wait_until_connected(self, timeout_s=25.0):
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError("Game belt feeder thread is not running")
-        if not self._session_ready.wait(timeout=timeout_s):
-            raise TimeoutError("Timed out waiting for belt feeder controller connection")
+        if not self._staging_ready.wait(timeout=timeout_s):
+            raise TimeoutError("Timed out waiting for belt feeder staging startup")
         if self._launch_error:
             raise RuntimeError(self._launch_error)
 
@@ -2081,13 +2090,17 @@ class GameLoopBeltFeeder:
 
     def _send_and_wait(self, arduino, command, targets, timeout_s=5.0, attempts=3, pre_delay_s=0.1):
         last_error = None
-        for _ in range(attempts):
+        self.controller.log_event(f"Belt feeder TX: {command}")
+        for attempt in range(1, attempts + 1):
             time.sleep(pre_delay_s)
             arduino.write(f"{command}\n".encode())
             try:
                 return self._wait_for(arduino, targets, timeout_s=timeout_s)
             except TimeoutError as exc:
                 last_error = exc
+                self.controller.log_event(
+                    f"Belt feeder timeout waiting for {targets} after {command} ({attempt}/{attempts})"
+                )
                 arduino.reset_input_buffer()
                 time.sleep(0.2)
         raise last_error
@@ -2110,6 +2123,7 @@ class GameLoopBeltFeeder:
     def _open_controller_session(self, serial_module, session_attempts=6):
         last_error = None
         self._session_ready.clear()
+        self._staging_ready.clear()
         for attempt in range(1, session_attempts + 1):
             arduino = None
             try:
@@ -2166,9 +2180,11 @@ class GameLoopBeltFeeder:
         return new_arduino
 
     def _start_staging_run(self, arduino, accel):
+        self._staging_ready.clear()
         self._send_and_wait(arduino, f"SPEED {BELT_STAGE_SPEED}", {"OK", "ERR"}, attempts=6)
         self._send_and_wait(arduino, f"ACCEL {int(accel)}", {"OK", "ERR"}, attempts=6)
         self._send_and_wait(arduino, f"RUN {BELT_STAGE_SPEED}", {"OK", "ERR"}, attempts=6)
+        self._staging_ready.set()
         self.controller._update_state(
             belt_running=True,
             belt_status="staging",
@@ -2193,15 +2209,16 @@ class GameLoopBeltFeeder:
             from FullSubsystems.belt import open_belt_tcs34725
 
             state = self.controller.get_state()
-            sensor = open_belt_tcs34725(
-                integration_time_ms=int(state["belt_detect_integration_ms"]),
-                gain=4,
-            )
 
             with self.controller._arduino_lock:
                 arduino = self._open_controller_session(serial)
                 self._start_staging_run(arduino, int(state["belt_accel"]))
                 stage_running = True
+                self.controller.log_event("Opening belt TCS after staging startup")
+                sensor = open_belt_tcs34725(
+                    integration_time_ms=int(state["belt_detect_integration_ms"]),
+                    gain=4,
+                )
 
                 while not self.stop_event.is_set() and not self.parent_stop_event.is_set():
                     while True:
@@ -2452,6 +2469,8 @@ class GameLoopBeltFeeder:
                 error=str(exc),
             )
         finally:
+            self._session_ready.clear()
+            self._staging_ready.clear()
             if arduino is not None:
                 try:
                     self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0, attempts=1)
