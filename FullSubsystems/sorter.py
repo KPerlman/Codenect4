@@ -343,6 +343,12 @@ def main():
     parser.add_argument("--drop-hold", type=float, default=DROP_HOLD)
     parser.add_argument("--sample-count", type=int, default=5)
     parser.add_argument("--sample-delay", type=float, default=0.05)
+    parser.add_argument(
+        "--max-sorted",
+        type=int,
+        default=None,
+        help="If set, exit after this many non-empty pieces have been sorted",
+    )
     parser.add_argument("--debug", action="store_true", help="Print step-by-step moves")
     args = parser.parse_args()
 
@@ -354,6 +360,7 @@ def main():
 
     miss_count = 0
     next_pickup_right = True
+    sorted_count = 0
 
     try:
         move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
@@ -419,6 +426,7 @@ def main():
                 time.sleep(args.drop_settle)
                 time.sleep(args.drop_hold)
                 miss_count = 0
+                sorted_count += 1
             elif color == "yellow":
                 if args.debug:
                     print(f"Drop -> player ({PLAYER_DROP})")
@@ -426,12 +434,18 @@ def main():
                 time.sleep(args.drop_settle)
                 time.sleep(args.drop_hold)
                 miss_count = 0
+                sorted_count += 1
             else:
                 if args.debug:
                     print(f"Reset -> player ({PLAYER_DROP}) after {color}")
                 move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)
                 time.sleep(args.drop_settle)
                 miss_count += 1
+
+            if args.max_sorted is not None and sorted_count >= args.max_sorted:
+                if args.debug:
+                    print(f"Reached max sorted count {args.max_sorted}; exiting sorter.")
+                break
 
     finally:
         move_servo(pca, SERVO_CHANNEL, PLAYER_DROP, max_angle=MAX_ANGLE, offset=OFFSET)

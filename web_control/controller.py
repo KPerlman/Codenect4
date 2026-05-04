@@ -271,6 +271,12 @@ class RobotWebController:
 
     def get_state(self):
         with self._lock:
+            if self._sorter_process is not None and self._sorter_process.poll() is not None:
+                self._sorter_process = None
+                self._state.sorter_running = False
+                self._state.sorting_enabled = False
+                if self._state.message == "Sorter enabled":
+                    self._state.message = "Sorter completed"
             return self._state.to_dict()
 
     def _update_state(self, **changes):
@@ -332,7 +338,7 @@ class RobotWebController:
         time.sleep(0.2)
         return self.start_game(camera=camera, device=device, width=width, height=height, depth=depth, state_streak=state_streak)
 
-    def enable_sorting(self):
+    def enable_sorting(self, max_sorted=None):
         with self._lock:
             calibration_running = (
                 self._sorter_calibration_thread is not None
@@ -348,7 +354,10 @@ class RobotWebController:
                 self._update_state(sorting_enabled=True, sorter_running=True, message="Sorter already running")
                 return self._state.to_dict()
 
-        cmd = [sys.executable, str(ROOT_DIR / "FullSubsystems" / "sorter.py"), *runtime_args]
+        extra_args = []
+        if max_sorted is not None:
+            extra_args.extend(["--max-sorted", str(max_sorted)])
+        cmd = [sys.executable, str(ROOT_DIR / "FullSubsystems" / "sorter.py"), *runtime_args, *extra_args]
         process = subprocess.Popen(
             cmd,
             cwd=str(ROOT_DIR),
@@ -356,7 +365,8 @@ class RobotWebController:
             stderr=subprocess.DEVNULL,
         )
         self._sorter_process = process
-        self._update_state(sorting_enabled=True, sorter_running=True, message="Sorter enabled")
+        message = "Sorter enabled" if max_sorted is None else f"Sorter enabled for {max_sorted} pieces"
+        self._update_state(sorting_enabled=True, sorter_running=True, message=message)
         return self.get_state()
 
     def disable_sorting(self):
@@ -749,8 +759,10 @@ class GameLoopWorker:
             self.controller._gate_is_out = False
         self.controller._update_state(message="Clear gate returned to position")
 
-    def _complete_game(self, message, winner=0):
+    def _complete_game(self, message, confirmed_board, winner=0):
+        sorted_target = int(np.count_nonzero(confirmed_board != 0)) + 5
         self._move_gate_out_if_needed()
+        self.controller.enable_sorting(max_sorted=sorted_target)
         self.controller._update_state(
             game_status="finished",
             game_phase="complete",
@@ -759,7 +771,7 @@ class GameLoopWorker:
             prompt=None,
             detected_yellow_column=None,
             suggested_red_column=None,
-            message=message,
+            message=f"{message} Post-game sorting started for {sorted_target} pieces.",
             winner=winner,
         )
 
@@ -958,10 +970,10 @@ class GameLoopWorker:
                     self._sync_tracker_board(tracker, confirmed_board)
 
                 if board_winner(confirmed_board) == 2:
-                    self._complete_game("YELLOW wins", winner=2)
+                    self._complete_game("YELLOW wins", confirmed_board, winner=2)
                     break
                 if board_full(confirmed_board):
-                    self._complete_game("Board full: draw")
+                    self._complete_game("Board full: draw", confirmed_board)
                     break
 
                 self.controller._update_state(
@@ -1009,10 +1021,10 @@ class GameLoopWorker:
                 stable_streak = self.state_streak
 
                 if board_winner(confirmed_board) == 1:
-                    self._complete_game("RED wins", winner=1)
+                    self._complete_game("RED wins", confirmed_board, winner=1)
                     break
                 if board_full(confirmed_board):
-                    self._complete_game("Board full: draw")
+                    self._complete_game("Board full: draw", confirmed_board)
                     break
 
                 self.controller._update_state(
