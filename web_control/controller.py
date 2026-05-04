@@ -3,6 +3,7 @@ import subprocess
 import sys
 import threading
 import time
+import base64
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ from FullSubsystems.game_state_cv import (
     internal_column_from_user,
     legal_ai_transition,
     legal_human_transition,
+    open_camera,
     open_first_available_camera,
     reopen_camera,
     safe_read_frame,
@@ -246,6 +248,8 @@ class RobotWebController:
         self._gate_is_out = False
         self._pending_start_board = None
         self._pending_start_turn = "yellow"
+        self._latest_camera_frame_b64 = None
+        self._latest_camera_frame_source = None
         self._append_log_locked("Runtime controller initialized")
 
     def _append_log_locked(self, text):
@@ -694,6 +698,65 @@ class RobotWebController:
         with self._lock:
             return {"runtime_log": list(self._state.runtime_log)}
 
+    def cache_camera_frame(self, frame, source=None):
+        try:
+            import cv2
+
+            ok, encoded = cv2.imencode(".jpg", frame)
+            if not ok:
+                return
+            payload = base64.b64encode(encoded.tobytes()).decode("ascii")
+        except Exception:
+            return
+
+        with self._lock:
+            self._latest_camera_frame_b64 = payload
+            if source is not None:
+                self._latest_camera_frame_source = str(source)
+
+    def capture_camera_snapshot(self, width=640, height=480):
+        with self._lock:
+            cached = self._latest_camera_frame_b64
+            cached_source = self._latest_camera_frame_source or self._state.camera_source
+            active_source = self._state.camera_source
+
+        if cached:
+            return {
+                "ok": True,
+                "camera_source": cached_source,
+                "image_data_url": f"data:image/jpeg;base64,{cached}",
+                "cached": True,
+            }
+
+        candidates = []
+        if active_source:
+            candidates.append(active_source)
+        for source in choose_camera(width=width, height=height):
+            if source not in candidates:
+                candidates.append(source)
+
+        cap = None
+        selected_source = None
+        try:
+            cap, selected_source = open_first_available_camera(candidates, width, height)
+            ret, frame = safe_read_frame(cap)
+            if not ret or frame is None:
+                raise RuntimeError(f"Could not read a frame from {selected_source}")
+            self.cache_camera_frame(frame, source=selected_source)
+            with self._lock:
+                payload = self._latest_camera_frame_b64
+            if not payload:
+                raise RuntimeError("Could not encode the captured frame")
+            return {
+                "ok": True,
+                "camera_source": str(selected_source),
+                "image_data_url": f"data:image/jpeg;base64,{payload}",
+                "cached": False,
+            }
+        finally:
+            if cap is not None:
+                cap.release()
+
     def _update_state(self, **changes):
         with self._lock:
             previous_values = {key: getattr(self._state, key, None) for key in changes}
@@ -979,6 +1042,9 @@ class RobotWebController:
             gate_error=None,
             message="Runtime rebooted. Saved settings and calibration values were preserved.",
         )
+        with self._lock:
+            self._latest_camera_frame_b64 = None
+            self._latest_camera_frame_source = None
         return self.get_state()
 
     def enable_sorting(self, max_sorted=None):
@@ -1784,6 +1850,7 @@ class GameLoopWorker:
         stable_streak = 0
         stable_board = None
         last_calibration_log_at = 0.0
+        last_snapshot_cache_at = 0.0
 
         try:
             self._move_gate_in_if_needed()
@@ -1890,6 +1957,10 @@ class GameLoopWorker:
 
                 failed_reads = 0
                 recovery_cycles = 0
+                now = time.time()
+                if now - last_snapshot_cache_at >= 0.5:
+                    self.controller.cache_camera_frame(frame, source=str(camera_source))
+                    last_snapshot_cache_at = now
                 _, _, _ = tracker.process_frame(frame)
                 board_copy = np.copy(tracker.board_state)
                 display_board_copy = np.copy(board_copy)

@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04m"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04n"
 
 
 class StartGameRequest(BaseModel):
@@ -99,6 +99,14 @@ def api_state():
 @app.get("/api/runtime/log")
 def api_runtime_log():
     return controller.get_runtime_log()
+
+
+@app.get("/api/camera/snapshot")
+def api_camera_snapshot():
+    try:
+        return controller.capture_camera_snapshot()
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 @app.get("/health")
@@ -811,6 +819,15 @@ PAGE_HTML = """
           </div>
         </div>
 
+        <div class="panel section">
+          <div class="section-title">Camera Snapshot</div>
+          <div class="confirm-copy" id="cameraSnapshotStatus">Capture one frame from the webcam.</div>
+          <div class="controls">
+            <button class="secondary" onclick="captureCameraSnapshot()">Capture Frame</button>
+          </div>
+          <img id="cameraSnapshotImage" class="hidden" alt="Camera snapshot preview" style="width:100%; border-radius:16px; margin-top:12px; border:1px solid rgba(120,130,150,0.18);" />
+        </div>
+
         <div id="yellowCard" class="panel confirm-panel hidden">
           <div class="section-title">Yellow Confirmation</div>
           <div class="confirm-title">Validate player move</div>
@@ -1081,6 +1098,34 @@ PAGE_HTML = """
         await navigator.clipboard.writeText(payload);
       } catch (err) {
         console.warn("Clipboard copy failed", err);
+      }
+    }
+
+    async function captureCameraSnapshot() {
+      const status = document.getElementById("cameraSnapshotStatus");
+      const image = document.getElementById("cameraSnapshotImage");
+      if (status) {
+        status.textContent = "Capturing frame...";
+      }
+      try {
+        const payload = await api("/api/camera/snapshot");
+        if (!payload || payload.ok === false || !payload.image_data_url) {
+          throw new Error(payload && payload.error ? payload.error : "Snapshot capture failed");
+        }
+        if (image) {
+          image.src = payload.image_data_url;
+          image.classList.remove("hidden");
+        }
+        if (status) {
+          const source = payload.camera_source || "camera";
+          status.textContent = payload.cached
+            ? `Showing cached frame from ${source}.`
+            : `Captured frame from ${source}.`;
+        }
+      } catch (err) {
+        if (status) {
+          status.textContent = `Snapshot failed: ${err.message || err}`;
+        }
       }
     }
 
