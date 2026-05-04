@@ -344,6 +344,10 @@ PAGE_HTML = """
       grid-template-columns: repeat(7, 1fr);
       gap: 6px;
       margin-bottom: 6px;
+      max-width: 380px;
+      width: 100%;
+      margin-left: auto;
+      margin-right: auto;
       text-align: center;
       color: #7b8491;
       font-size: 0.68rem;
@@ -467,6 +471,9 @@ PAGE_HTML = """
       display: grid;
       gap: 8px;
       grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
+    }
+    .controls.spaced-top {
+      margin-top: 8px;
     }
     .controls.one-line {
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -734,7 +741,7 @@ PAGE_HTML = """
           <div class="controls">
             <button class="secondary" onclick="startBeltCalibration()">Calibrate Belt TCS</button>
           </div>
-          <div class="controls">
+          <div class="controls spaced-top">
             <button id="beltTestButton" class="secondary" onclick="toggleBeltTest()">Test Belt Calibration</button>
             <button id="beltTestContinueButton" class="warning" onclick="continueBeltTest()">Continue</button>
           </div>
