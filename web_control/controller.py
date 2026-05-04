@@ -2105,6 +2105,32 @@ class GameLoopBeltFeeder:
                 time.sleep(0.2)
         raise last_error
 
+    def _send_and_maybe_assume_success(
+        self,
+        arduino,
+        command,
+        targets,
+        timeout_s=5.0,
+        attempts=3,
+        pre_delay_s=0.1,
+        assume_reason="",
+    ):
+        try:
+            return self._send_and_wait(
+                arduino,
+                command,
+                targets,
+                timeout_s=timeout_s,
+                attempts=attempts,
+                pre_delay_s=pre_delay_s,
+            )
+        except TimeoutError:
+            reason_suffix = f" ({assume_reason})" if assume_reason else ""
+            self.controller.log_event(
+                f"Belt feeder did not receive an acknowledgement for {command}; assuming the command applied{reason_suffix}"
+            )
+            return None
+
     def _sync_controller(self, arduino, attempts=6, timeout_s=1.5):
         for attempt in range(1, attempts + 1):
             self.controller.log_event(f"Belt feeder PING attempt {attempt}/{attempts}")
@@ -2181,9 +2207,27 @@ class GameLoopBeltFeeder:
 
     def _start_staging_run(self, arduino, accel):
         self._staging_ready.clear()
-        self._send_and_wait(arduino, f"SPEED {BELT_STAGE_SPEED}", {"OK", "ERR"}, attempts=6)
-        self._send_and_wait(arduino, f"ACCEL {int(accel)}", {"OK", "ERR"}, attempts=6)
-        self._send_and_wait(arduino, f"RUN {BELT_STAGE_SPEED}", {"OK", "ERR"}, attempts=6)
+        self._send_and_maybe_assume_success(
+            arduino,
+            f"SPEED {BELT_STAGE_SPEED}",
+            {"OK", "ERR"},
+            attempts=6,
+            assume_reason="continuous staging speed commands often execute even when the Arduino misses the reply",
+        )
+        self._send_and_maybe_assume_success(
+            arduino,
+            f"ACCEL {int(accel)}",
+            {"OK", "ERR"},
+            attempts=6,
+            assume_reason="continuous staging accel commands often execute even when the Arduino misses the reply",
+        )
+        self._send_and_maybe_assume_success(
+            arduino,
+            f"RUN {BELT_STAGE_SPEED}",
+            {"OK", "ERR"},
+            attempts=6,
+            assume_reason="continuous staging run commands often execute even when the Arduino misses the reply",
+        )
         self._staging_ready.set()
         self.controller._update_state(
             belt_running=True,
@@ -2235,17 +2279,15 @@ class GameLoopBeltFeeder:
                         if command_type == "pause":
                             self._paused = True
                             if stage_running:
-                                try:
-                                    self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0, attempts=2)
-                                    stage_running = False
-                                except TimeoutError:
-                                    arduino = self._reconnect_controller_session(
-                                        serial,
-                                        arduino,
-                                        self.controller.get_state()["belt_accel"],
-                                        restart_stage=False,
-                                    )
-                                    stage_running = False
+                                self._send_and_maybe_assume_success(
+                                    arduino,
+                                    "STOP",
+                                    {"OK"},
+                                    timeout_s=2.0,
+                                    attempts=2,
+                                    assume_reason="staging stop commands often take effect even when STOP is not acknowledged",
+                                )
+                                stage_running = False
                             self.controller._update_state(
                                 belt_running=False,
                                 belt_status="paused",
@@ -2425,17 +2467,15 @@ class GameLoopBeltFeeder:
 
                     if detect_streak >= detect_streak_target:
                         if stage_running:
-                            try:
-                                self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0, attempts=2)
-                                stage_running = False
-                            except TimeoutError:
-                                arduino = self._reconnect_controller_session(
-                                    serial,
-                                    arduino,
-                                    state["belt_accel"],
-                                    restart_stage=False,
-                                )
-                                stage_running = False
+                            self._send_and_maybe_assume_success(
+                                arduino,
+                                "STOP",
+                                {"OK"},
+                                timeout_s=2.0,
+                                attempts=2,
+                                assume_reason="piece staging stops are sensor-driven, so we prefer holding the piece over reconnecting on a missed STOP reply",
+                            )
+                            stage_running = False
                         piece_staged = True
                         self._ready_confirmed = False
                         self.controller.log_event(
@@ -2508,7 +2548,14 @@ class GameLoopBeltFeeder:
             self._staging_ready.clear()
             if arduino is not None:
                 try:
-                    self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0, attempts=1)
+                    self._send_and_maybe_assume_success(
+                        arduino,
+                        "STOP",
+                        {"OK"},
+                        timeout_s=2.0,
+                        attempts=1,
+                        assume_reason="belt feeder shutdown should not fail just because STOP was not acknowledged",
+                    )
                 except Exception:
                     pass
                 try:
