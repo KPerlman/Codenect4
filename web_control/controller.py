@@ -35,7 +35,7 @@ GATE_DEFAULT_SPEED = 600
 GATE_DEFAULT_ACCEL = 400
 GATE_DEFAULT_STEPS = 1000
 BELT_CLEAR_THRESH = 2500.0
-BELT_POST_DETECT_STEPS = 1000
+BELT_POST_DETECT_DELAY_MS = 500
 BELT_GAME_SPEED = 4000
 BELT_GAME_ACCEL = 400
 
@@ -113,7 +113,7 @@ class SharedState:
     belt_error: str | None = None
     belt_clear_thresh: float = BELT_CLEAR_THRESH
     belt_detect_mode: str = "below"
-    belt_post_detect_steps: int = BELT_POST_DETECT_STEPS
+    belt_post_detect_delay_ms: int = BELT_POST_DETECT_DELAY_MS
     belt_calibration_running: bool = False
     belt_calibration_prompt: str | None = None
     belt_calibration_last_sample: dict[str, float] | None = None
@@ -171,7 +171,7 @@ class SharedState:
             "belt_error": self.belt_error,
             "belt_clear_thresh": self.belt_clear_thresh,
             "belt_detect_mode": self.belt_detect_mode,
-            "belt_post_detect_steps": self.belt_post_detect_steps,
+            "belt_post_detect_delay_ms": self.belt_post_detect_delay_ms,
             "belt_calibration_running": self.belt_calibration_running,
             "belt_calibration_prompt": self.belt_calibration_prompt,
             "belt_calibration_last_sample": self.belt_calibration_last_sample,
@@ -345,7 +345,7 @@ class RobotWebController:
         accel=None,
         steps=None,
         clear_thresh=None,
-        post_detect_steps=None,
+        post_detect_delay_ms=None,
         game_belt_enabled=None,
     ):
         changes = {}
@@ -356,8 +356,8 @@ class RobotWebController:
         changes["belt_steps"] = None if steps is None else int(steps)
         if clear_thresh is not None:
             changes["belt_clear_thresh"] = float(clear_thresh)
-        if post_detect_steps is not None:
-            changes["belt_post_detect_steps"] = int(post_detect_steps)
+        if post_detect_delay_ms is not None:
+            changes["belt_post_detect_delay_ms"] = int(post_detect_delay_ms)
         if game_belt_enabled is not None:
             changes["game_belt_enabled"] = bool(game_belt_enabled)
         if changes:
@@ -1170,7 +1170,7 @@ class GameLoopWorker:
         accel = BELT_GAME_ACCEL
         clear_thresh = float(state["belt_clear_thresh"])
         detect_mode = state["belt_detect_mode"]
-        post_steps = int(state["belt_post_detect_steps"])
+        post_detect_delay_ms = int(state["belt_post_detect_delay_ms"])
 
         sensor = open_belt_tcs34725(integration_time_ms=100, gain=4)
         detect_streak = 0
@@ -1244,16 +1244,22 @@ class GameLoopWorker:
                     )
 
                     if detect_streak >= 2:
+                        self.controller._update_state(
+                            message=(
+                                f"Belt detected a piece at clear={clear_value:.1f}. "
+                                f"Continuing for {post_detect_delay_ms} ms before stopping."
+                            ),
+                        )
+                        time.sleep(post_detect_delay_ms / 1000.0)
                         self._send_serial_cmd(arduino, "STOP", {"OK"}, timeout_s=2.0)
-                        self._send_serial_cmd(arduino, f"STEPS {post_steps}", {"DONE"}, timeout_s=12.0)
                         self.controller._update_state(
                             belt_running=False,
                             belt_status="completed",
-                            belt_mode="steps",
+                            belt_mode="continuous",
                             belt_error=None,
                             message=(
                                 f"Belt detected a piece at clear={clear_value:.1f} "
-                                f"and advanced {post_steps} more steps"
+                                f"and stopped {post_detect_delay_ms} ms later"
                             ),
                         )
                         return
@@ -2002,7 +2008,7 @@ class BeltCalibrationTestWorker:
             accel = int(state["belt_accel"])
             clear_thresh = float(state["belt_clear_thresh"])
             detect_mode = state["belt_detect_mode"]
-            post_steps = int(state["belt_post_detect_steps"])
+            post_detect_delay_ms = int(state["belt_post_detect_delay_ms"])
 
             with self.controller._arduino_lock:
                 arduino = serial.Serial(self.PORT, 9600, timeout=1)
@@ -2056,19 +2062,27 @@ class BeltCalibrationTestWorker:
                         )
 
                         if detect_streak >= 2:
+                            self.controller._update_state(
+                                belt_test_prompt=(
+                                    f"Detected a piece at clear={clear_value:.1f}. "
+                                    f"Continuing for {post_detect_delay_ms} ms before stopping."
+                                ),
+                                message="Belt test detected a piece; coasting before stop",
+                            )
+                            time.sleep(post_detect_delay_ms / 1000.0)
                             self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0)
                             active = False
-                            self._send_and_wait(arduino, f"STEPS {post_steps}", {"DONE"}, timeout_s=12.0)
                             self.controller._update_state(
                                 belt_test_running=True,
                                 belt_test_waiting_continue=True,
                                 belt_test_prompt=(
-                                    f"Detected a piece at clear={clear_value:.1f}. Press Continue to run the next piece."
+                                    f"Detected a piece at clear={clear_value:.1f} and stopped "
+                                    f"{post_detect_delay_ms} ms later. Press Continue to run the next piece."
                                 ),
                                 belt_running=False,
                                 belt_status="test-paused",
-                                belt_mode="steps",
-                                message=f"Belt test paused after {post_steps} post-detect steps",
+                                belt_mode="continuous",
+                                message=f"Belt test paused {post_detect_delay_ms} ms after detection",
                             )
                             if not self._wait_for_continue():
                                 return
