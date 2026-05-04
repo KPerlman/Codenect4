@@ -376,6 +376,26 @@ class RobotWebController:
         )
         return self.get_state()
 
+    def stop_sorter_calibration(self):
+        thread = None
+        with self._lock:
+            if self._sorter_calibration_stop_event is not None:
+                self._sorter_calibration_stop_event.set()
+            if self._sorter_calibration_commands is not None:
+                self._sorter_calibration_commands.put({"type": "label", "label": "q"})
+            thread = self._sorter_calibration_thread
+        if thread and thread.is_alive():
+            thread.join(timeout=3.0)
+        self._update_state(
+            sorter_calibration_running=False,
+            sorter_calibration_prompt="Sorter calibration stopped.",
+            sorter_calibration_sample=None,
+            sorting_enabled=False,
+            sorter_running=False,
+            message="Sorter calibration stopped",
+        )
+        return self.get_state()
+
     def update_belt_settings(
         self,
         speed=None,
@@ -680,6 +700,63 @@ class RobotWebController:
         self.stop_game()
         time.sleep(0.2)
         return self.start_game(camera=camera, device=device, width=width, height=height, depth=depth, state_streak=state_streak)
+
+    def reboot_runtime(self):
+        self.stop_game()
+        self.stop_belt_test()
+        self.stop_belt()
+        self.stop_gate()
+        self.disable_sorting()
+        self.stop_sorter_calibration()
+
+        with self._lock:
+            if self._belt_calibration_sensor is not None:
+                try:
+                    self._belt_calibration_sensor.deinit()
+                except Exception:
+                    pass
+                self._belt_calibration_sensor = None
+            self._belt_calibration_empty_samples = []
+            self._belt_calibration_piece_samples = []
+
+        self._update_state(
+            game_running=False,
+            game_paused=False,
+            game_status="idle",
+            game_phase="idle",
+            turn_state="idle",
+            awaiting_confirmation=None,
+            prompt=None,
+            error=None,
+            winner=0,
+            tracker_active=False,
+            tracker_calibrated=False,
+            camera_source=None,
+            current_board=[[0] * 7 for _ in range(6)],
+            confirmed_board=[[0] * 7 for _ in range(6)],
+            suggested_red_column=None,
+            detected_yellow_column=None,
+            confirmed_red_count=0,
+            confirmed_yellow_count=0,
+            pending_yellow_count=0,
+            belt_running=False,
+            belt_status="idle",
+            belt_mode="continuous",
+            belt_error=None,
+            belt_calibration_running=False,
+            belt_calibration_prompt="Belt calibration stopped.",
+            belt_calibration_last_sample=None,
+            belt_test_running=False,
+            belt_test_waiting_continue=False,
+            belt_test_prompt="Belt calibration test stopped.",
+            belt_piece_ready=False,
+            belt_ready_confirmed=False,
+            gate_running=False,
+            gate_status="idle",
+            gate_error=None,
+            message="Runtime rebooted. Saved settings and calibration values were preserved.",
+        )
+        return self.get_state()
 
     def enable_sorting(self, max_sorted=None):
         with self._lock:
@@ -2358,6 +2435,18 @@ class SorterCalibrationWorker:
                     move_servo(pca, SERVO_CHANNEL, pickup_angle, max_angle=MAX_ANGLE, offset=OFFSET)
                     time.sleep(DROP_SETTLE)
                     time.sleep(DROP_HOLD)
+
+            if self.stop_event.is_set():
+                self.controller._update_state(
+                    sorter_calibration_running=False,
+                    sorter_calibration_prompt="Sorter calibration stopped.",
+                    sorter_calibration_sample=None,
+                    message="Sorter calibration stopped",
+                    error=None,
+                    sorting_enabled=False,
+                    sorter_running=False,
+                )
+                return
 
             results = compute_calibration_results(
                 red_samples,

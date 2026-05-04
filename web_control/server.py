@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04b"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04c"
 
 
 class StartGameRequest(BaseModel):
@@ -118,6 +118,11 @@ def api_reset_game(request: StartGameRequest):
         depth=request.depth,
         state_streak=request.state_streak,
     )
+
+
+@app.post("/api/runtime/reboot")
+def api_reboot_runtime():
+    return controller.reboot_runtime()
 
 
 @app.post("/api/game/yellow-confirm")
@@ -632,6 +637,9 @@ PAGE_HTML = """
             <button id="primaryGameButton" onclick="handlePrimaryGameAction()">Start Game</button>
             <button class="warning" onclick="resetGame()">Reset Game</button>
           </div>
+          <div class="controls spaced-top">
+            <button class="danger" onclick="rebootRuntime()">Reboot Runtime</button>
+          </div>
           <div id="beltReadyControls" class="controls hidden spaced-top">
             <button id="beltReadyConfirmButton" class="ok" onclick="confirmBeltReady(true)">Confirm Ready</button>
             <button id="beltReadyRejectButton" class="secondary" onclick="confirmBeltReady(false)">False Positive</button>
@@ -883,6 +891,12 @@ PAGE_HTML = """
       await syncBeltSettings();
       await api("/api/game/reset", "POST", { device: "/dev/video0", width: 640, height: 480, depth: 5, state_streak: 3 });
       await refresh();
+    }
+
+    async function rebootRuntime() {
+      await api("/api/runtime/reboot", "POST");
+      await refresh();
+      await refreshHealth();
     }
 
     async function enableSorting() {
