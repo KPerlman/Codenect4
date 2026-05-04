@@ -44,6 +44,7 @@ BELT_DETECT_INTEGRATION_MS = 12
 BELT_DETECT_SAMPLES = 1
 BELT_DETECT_STREAK = 1
 BELT_DETECT_SAMPLE_DELAY_S = 0.005
+RUNTIME_LOG_LIMIT = 500
 
 
 def move_servo_zero_position(pca, channel, angle, max_angle=180, offset=0):
@@ -144,6 +145,7 @@ class SharedState:
     gate_accel: int = GATE_DEFAULT_ACCEL
     gate_steps: int | None = None
     gate_error: str | None = None
+    runtime_log: list[str] = field(default_factory=list)
     updated_at: float = field(default_factory=time.time)
 
     def to_dict(self):
@@ -208,6 +210,7 @@ class SharedState:
             "gate_accel": self.gate_accel,
             "gate_steps": self.gate_steps,
             "gate_error": self.gate_error,
+            "runtime_log": self.runtime_log,
             "updated_at": self.updated_at,
         }
 
@@ -237,6 +240,69 @@ class RobotWebController:
         self._gate_thread = None
         self._gate_stop_event = None
         self._gate_is_out = False
+        self._append_log_locked("Runtime controller initialized")
+
+    def _append_log_locked(self, text):
+        timestamp = time.strftime("%H:%M:%S")
+        entry = f"[{timestamp}] {text}"
+        self._state.runtime_log.append(entry)
+        if len(self._state.runtime_log) > RUNTIME_LOG_LIMIT:
+            self._state.runtime_log = self._state.runtime_log[-RUNTIME_LOG_LIMIT:]
+
+    def log_event(self, text):
+        with self._lock:
+            self._append_log_locked(text)
+            self._state.updated_at = time.time()
+
+    def _log_state_changes_locked(self, previous_values, changes):
+        field_labels = {
+            "game_status": "Game status",
+            "game_phase": "Game phase",
+            "turn_state": "Turn state",
+            "awaiting_confirmation": "Awaiting confirmation",
+            "tracker_active": "Tracker active",
+            "tracker_calibrated": "Tracker calibrated",
+            "camera_source": "Camera source",
+            "sorting_enabled": "Sorting enabled",
+            "sorter_running": "Sorter running",
+            "sorter_calibration_running": "Sorter calibration",
+            "belt_running": "Belt running",
+            "belt_status": "Belt status",
+            "belt_mode": "Belt mode",
+            "belt_piece_ready": "Belt piece ready",
+            "belt_ready_confirmed": "Belt ready confirmed",
+            "belt_test_running": "Belt test",
+            "belt_calibration_running": "Belt calibration",
+            "gate_running": "Gate running",
+            "gate_status": "Gate status",
+            "suggested_red_column": "Suggested red column",
+            "detected_yellow_column": "Detected yellow column",
+            "winner": "Winner",
+        }
+
+        for field_name, label in field_labels.items():
+            if field_name in changes and previous_values.get(field_name) != changes[field_name]:
+                self._append_log_locked(f"{label}: {changes[field_name]}")
+
+        if "prompt" in changes and previous_values.get("prompt") != changes["prompt"] and changes["prompt"]:
+            self._append_log_locked(f"Prompt: {changes['prompt']}")
+        if "message" in changes and previous_values.get("message") != changes["message"] and changes["message"]:
+            self._append_log_locked(f"Message: {changes['message']}")
+        if "error" in changes and previous_values.get("error") != changes["error"]:
+            if changes["error"]:
+                self._append_log_locked(f"ERROR: {changes['error']}")
+            elif previous_values.get("error"):
+                self._append_log_locked("Error cleared")
+        if "belt_error" in changes and previous_values.get("belt_error") != changes["belt_error"]:
+            if changes["belt_error"]:
+                self._append_log_locked(f"Belt error: {changes['belt_error']}")
+            elif previous_values.get("belt_error"):
+                self._append_log_locked("Belt error cleared")
+        if "gate_error" in changes and previous_values.get("gate_error") != changes["gate_error"]:
+            if changes["gate_error"]:
+                self._append_log_locked(f"Gate error: {changes['gate_error']}")
+            elif previous_values.get("gate_error"):
+                self._append_log_locked("Gate error cleared")
 
     def _read_belt_color_sample(self, sensor, count=8, delay_s=0.04):
         r_total = g_total = b_total = c_total = 0.0
@@ -618,8 +684,10 @@ class RobotWebController:
 
     def _update_state(self, **changes):
         with self._lock:
+            previous_values = {key: getattr(self._state, key, None) for key in changes}
             for key, value in changes.items():
                 setattr(self._state, key, value)
+            self._log_state_changes_locked(previous_values, changes)
             self._state.updated_at = time.time()
 
     def start_game(self, camera=None, device=None, width=640, height=480, depth=5, state_streak=3):
@@ -1538,6 +1606,7 @@ class GameLoopWorker:
         last_seen_board = None
         stable_streak = 0
         stable_board = None
+        last_calibration_log_at = 0.0
 
         try:
             self._move_gate_in_if_needed()
@@ -1679,6 +1748,15 @@ class GameLoopWorker:
                         turn_state="booting",
                         message="Calibrating empty board",
                     )
+                    now = time.time()
+                    if now - last_calibration_log_at >= 5.0:
+                        self.controller.log_event(
+                            "Calibration heartbeat: "
+                            f"tracker_active={tracker.is_board_active}, "
+                            f"tracker_calibrated={tracker.is_calibrated}, "
+                            f"stable_streak={stable_streak}"
+                        )
+                        last_calibration_log_at = now
                     continue
                 if stable_board is None:
                     continue
