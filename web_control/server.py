@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04d"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04e"
 
 
 class StartGameRequest(BaseModel):
@@ -295,9 +295,17 @@ PAGE_HTML = """
       padding: 18px 16px 28px;
     }
     .masthead {
-      display: grid;
-      gap: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
       margin-bottom: 12px;
+    }
+    .masthead-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
     }
     h1 {
       margin: 0;
@@ -305,6 +313,15 @@ PAGE_HTML = """
       line-height: 1;
       letter-spacing: -0.06em;
       font-weight: 780;
+    }
+    @media (max-width: 720px) {
+      .masthead {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .masthead-actions {
+        justify-content: flex-end;
+      }
     }
     .layout {
       display: grid;
@@ -610,6 +627,9 @@ PAGE_HTML = """
   <div class="wrap">
     <div class="masthead">
       <h1>Connect4 Dashboard</h1>
+      <div class="masthead-actions">
+        <button class="danger" onclick="rebootRuntime()">Reboot Runtime</button>
+      </div>
     </div>
 
     <div class="layout">
@@ -636,9 +656,6 @@ PAGE_HTML = """
           <div class="controls">
             <button id="primaryGameButton" onclick="handlePrimaryGameAction()">Start Game</button>
             <button class="warning" onclick="resetGame()">Reset Game</button>
-          </div>
-          <div class="controls spaced-top">
-            <button class="danger" onclick="rebootRuntime()">Reboot Runtime</button>
           </div>
           <div id="beltReadyControls" class="controls hidden spaced-top">
             <button id="beltReadyConfirmButton" class="ok" onclick="confirmBeltReady(true)">Confirm Ready</button>
