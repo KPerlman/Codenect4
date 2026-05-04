@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03h"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03i"
 
 
 class StartGameRequest(BaseModel):
@@ -91,6 +91,11 @@ def api_start_game(request: StartGameRequest):
 @app.post("/api/game/stop")
 def api_stop_game():
     return controller.stop_game()
+
+
+@app.post("/api/game/pause-toggle")
+def api_pause_toggle_game():
+    return controller.toggle_pause_game()
 
 
 @app.post("/api/game/reset")
@@ -180,6 +185,21 @@ def api_start_belt_calibration():
 @app.post("/api/belt/calibration/action")
 def api_belt_calibration_action(request: BeltCalibrationActionRequest):
     return controller.submit_belt_calibration_action(request.action)
+
+
+@app.post("/api/belt/test/start")
+def api_start_belt_test():
+    return controller.start_belt_test()
+
+
+@app.post("/api/belt/test/continue")
+def api_continue_belt_test():
+    return controller.continue_belt_test()
+
+
+@app.post("/api/belt/test/stop")
+def api_stop_belt_test():
+    return controller.stop_belt_test()
 
 
 @app.post("/api/gate/start")
@@ -407,14 +427,19 @@ PAGE_HTML = """
       display: grid;
       gap: 10px;
     }
+    @media (min-width: 980px) {
+      .state-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
     .state-box {
-      padding: 12px;
+      padding: 10px 11px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel-soft);
     }
     .state-box h3 {
-      margin: 0 0 8px;
+      margin: 0 0 6px;
       color: #7b8491;
       font-size: 0.7rem;
       letter-spacing: 0.14em;
@@ -423,13 +448,14 @@ PAGE_HTML = """
     }
     .state-kv {
       display: grid;
-      gap: 6px;
+      gap: 4px;
     }
     .state-row {
       display: flex;
       justify-content: space-between;
-      gap: 12px;
-      font-size: 0.88rem;
+      gap: 8px;
+      font-size: 0.84rem;
+      line-height: 1.25;
     }
     .state-row span:first-child {
       color: var(--muted);
@@ -577,7 +603,7 @@ PAGE_HTML = """
           <div class="controls">
             <button onclick="startGame()">Start Game</button>
             <button class="warning" onclick="resetGame()">Reset Game</button>
-            <button class="danger" onclick="stopGame()">Stop Game</button>
+            <button id="pauseGameButton" class="secondary" onclick="togglePauseGame()">Pause Game</button>
           </div>
         </div>
       </div>
@@ -708,6 +734,10 @@ PAGE_HTML = """
           <div class="controls">
             <button class="secondary" onclick="startBeltCalibration()">Calibrate Belt TCS</button>
           </div>
+          <div class="controls">
+            <button id="beltTestButton" class="secondary" onclick="toggleBeltTest()">Test Belt Calibration</button>
+            <button id="beltTestContinueButton" class="warning" onclick="continueBeltTest()">Continue</button>
+          </div>
           <div class="confirm-copy" id="beltStatusText">Belt idle.</div>
           <div class="controls">
             <button id="beltActionButton" class="ok" onclick="toggleBelt()">Start Belt</button>
@@ -776,8 +806,8 @@ PAGE_HTML = """
       await refresh();
     }
 
-    async function stopGame() {
-      await api("/api/game/stop", "POST");
+    async function togglePauseGame() {
+      await api("/api/game/pause-toggle", "POST");
       await refresh();
     }
 
@@ -869,6 +899,21 @@ PAGE_HTML = """
 
     async function beltCalibrationAction(action) {
       await api("/api/belt/calibration/action", "POST", { action });
+      await refresh();
+    }
+
+    async function toggleBeltTest() {
+      await syncBeltSettings();
+      if (latestState && latestState.belt_test_running) {
+        await api("/api/belt/test/stop", "POST");
+      } else {
+        await api("/api/belt/test/start", "POST");
+      }
+      await refresh();
+    }
+
+    async function continueBeltTest() {
+      await api("/api/belt/test/continue", "POST");
       await refresh();
     }
 
@@ -1055,6 +1100,13 @@ PAGE_HTML = """
           text: "",
         };
       }
+      if (state.game_status === "paused") {
+        return {
+          className: "banner waiting",
+          title: "Game paused",
+          text: state.message || "Resume when you're ready.",
+        };
+      }
       if (state.game_status === "waiting_human_move") {
         return {
           className: "banner ready",
@@ -1150,6 +1202,8 @@ PAGE_HTML = """
       const status = document.getElementById("beltStatusText");
       const button = document.getElementById("beltActionButton");
       const modeButton = document.getElementById("gameBeltModeButton");
+      const testButton = document.getElementById("beltTestButton");
+      const continueButton = document.getElementById("beltTestContinueButton");
       if (!status || !button) return;
 
       const clearInput = document.getElementById("beltClearThresh");
@@ -1165,6 +1219,22 @@ PAGE_HTML = """
         modeButton.textContent = enabled ? "Game Belt: On" : "Game Belt: Manual Drop";
         modeButton.className = enabled ? "secondary" : "warning";
       }
+      if (testButton) {
+        testButton.textContent = state.belt_test_running ? "Stop Belt Test" : "Test Belt Calibration";
+        testButton.className = state.belt_test_running ? "danger" : "secondary";
+      }
+      if (continueButton) {
+        continueButton.disabled = !state.belt_test_running || !state.belt_test_waiting_continue;
+      }
+
+      if (state.belt_test_running) {
+        status.textContent = state.belt_test_prompt || "Belt calibration test running.";
+        button.textContent = "Start Belt";
+        button.className = "ok";
+        button.disabled = true;
+        return;
+      }
+      button.disabled = false;
 
       if (state.belt_running) {
         const modeText = state.belt_mode === "steps"
@@ -1299,11 +1369,25 @@ PAGE_HTML = """
       }
     }
 
+    function renderGameControls(state) {
+      const pauseButton = document.getElementById("pauseGameButton");
+      if (!pauseButton) return;
+      pauseButton.disabled = !state.game_running || state.game_status === "finished" || state.game_status === "error";
+      if (state.game_paused) {
+        pauseButton.textContent = "Resume Game";
+        pauseButton.className = "ok";
+      } else {
+        pauseButton.textContent = "Pause Game";
+        pauseButton.className = "secondary";
+      }
+    }
+
     async function refresh() {
       latestState = await api("/api/state");
       renderBanner(latestState);
       renderMeta(latestState);
       renderStateBlocks(latestState);
+      renderGameControls(latestState);
       renderBeltPanel(latestState);
       renderBeltCalibration(latestState);
       renderGatePanel(latestState);
