@@ -105,6 +105,7 @@ class SharedState:
     belt_running: bool = False
     belt_status: str = "idle"
     belt_mode: str = "continuous"
+    game_belt_enabled: bool = True
     belt_speed: int = 600
     belt_accel: int = 400
     belt_steps: int | None = None
@@ -158,6 +159,7 @@ class SharedState:
             "belt_running": self.belt_running,
             "belt_status": self.belt_status,
             "belt_mode": self.belt_mode,
+            "game_belt_enabled": self.game_belt_enabled,
             "belt_speed": self.belt_speed,
             "belt_accel": self.belt_accel,
             "belt_steps": self.belt_steps,
@@ -263,7 +265,15 @@ class RobotWebController:
         )
         return self.get_state()
 
-    def update_belt_settings(self, speed=None, accel=None, steps=None, clear_thresh=None, post_detect_steps=None):
+    def update_belt_settings(
+        self,
+        speed=None,
+        accel=None,
+        steps=None,
+        clear_thresh=None,
+        post_detect_steps=None,
+        game_belt_enabled=None,
+    ):
         changes = {}
         if speed is not None:
             changes["belt_speed"] = int(speed)
@@ -274,6 +284,8 @@ class RobotWebController:
             changes["belt_clear_thresh"] = float(clear_thresh)
         if post_detect_steps is not None:
             changes["belt_post_detect_steps"] = int(post_detect_steps)
+        if game_belt_enabled is not None:
+            changes["game_belt_enabled"] = bool(game_belt_enabled)
         if changes:
             self._update_state(**changes)
         return self.get_state()
@@ -776,7 +788,7 @@ class GameLoopWorker:
             time.sleep(0.1)
         return None
 
-    def _await_red_confirmation(self, cap, tracker, confirmed_board, ai_expected_board, ai_visible_column):
+    def _await_red_confirmation(self, cap, tracker, confirmed_board, ai_expected_board, ai_visible_column, manual_drop=False):
         self.controller._update_state(
             game_status="awaiting_red_confirmation",
             game_phase="robot_confirmation",
@@ -784,10 +796,13 @@ class GameLoopWorker:
             awaiting_confirmation="red",
             suggested_red_column=ai_visible_column,
             prompt=(
-                f"Place RED in column {ai_visible_column}. "
-                "Vision will confirm it automatically when it sees the correct placement."
+                (
+                    f"Manually drop RED into the top of column {ai_visible_column}, then confirm it in the app."
+                    if manual_drop
+                    else f"Place RED in column {ai_visible_column}. Vision will confirm it automatically when it sees the correct placement."
+                )
             ),
-            message="Waiting for RED placement",
+            message="Waiting for manual RED placement" if manual_drop else "Waiting for RED placement",
         )
         red_last_seen_board = None
         red_stable_board = None
@@ -1270,13 +1285,22 @@ class GameLoopWorker:
                     active_drop_servo_channel,
                     visible_red_col,
                 )
-                self._deliver_red_piece_with_belt()
+                use_belt = bool(self.controller.get_state()["game_belt_enabled"])
+                if use_belt:
+                    self._deliver_red_piece_with_belt()
+                else:
+                    self.controller._update_state(
+                        message=f"Manual red drop mode active for column {visible_red_col}",
+                        belt_running=False,
+                        belt_status="idle",
+                    )
                 maybe_red_board = self._await_red_confirmation(
                     cap,
                     tracker,
                     confirmed_board,
                     ai_expected_board,
                     visible_red_col,
+                    manual_drop=not use_belt,
                 )
                 active_drop_servo_channel = self._reset_drop_servo(
                     servo_pca,

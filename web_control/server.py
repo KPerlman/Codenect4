@@ -44,6 +44,7 @@ class BeltSettingsRequest(BaseModel):
     steps: int | None = None
     clear_thresh: float | None = None
     post_detect_steps: int | None = None
+    game_belt_enabled: bool | None = None
 
 
 class BeltCalibrationActionRequest(BaseModel):
@@ -157,6 +158,7 @@ def api_belt_settings(request: BeltSettingsRequest):
         steps=request.steps,
         clear_thresh=request.clear_thresh,
         post_detect_steps=request.post_detect_steps,
+        game_belt_enabled=request.game_belt_enabled,
     )
 
 
@@ -689,9 +691,12 @@ PAGE_HTML = """
               <input id="beltPostDetectSteps" type="number" inputmode="numeric" value="1000">
             </div>
             <div class="field">
-              <label>&nbsp;</label>
-              <button class="secondary" onclick="startBeltCalibration()">Calibrate Belt TCS</button>
+              <label>Game Loop Mode</label>
+              <button id="gameBeltModeButton" class="secondary" onclick="toggleGameBeltMode()">Game Belt: On</button>
             </div>
+          </div>
+          <div class="controls">
+            <button class="secondary" onclick="startBeltCalibration()">Calibrate Belt TCS</button>
           </div>
           <div class="confirm-copy" id="beltStatusText">Belt idle.</div>
           <div class="controls">
@@ -803,10 +808,32 @@ PAGE_HTML = """
       const stepsValue = document.getElementById("beltSteps").value.trim();
       const clearThreshValue = document.getElementById("beltClearThresh").value.trim();
       const postDetectValue = document.getElementById("beltPostDetectSteps").value.trim();
+      const game_belt_enabled = !(latestState && latestState.game_belt_enabled === false);
       const steps = stepsValue === "" ? null : parseInt(stepsValue, 10);
       const clear_thresh = clearThreshValue === "" ? null : parseFloat(clearThreshValue);
       const post_detect_steps = postDetectValue === "" ? null : parseInt(postDetectValue, 10);
-      await api("/api/belt/settings", "POST", { speed, accel, steps, clear_thresh, post_detect_steps });
+      await api("/api/belt/settings", "POST", { speed, accel, steps, clear_thresh, post_detect_steps, game_belt_enabled });
+    }
+
+    async function toggleGameBeltMode() {
+      const nextEnabled = !(latestState && latestState.game_belt_enabled !== false);
+      const speed = parseInt(document.getElementById("beltSpeed").value || "600", 10);
+      const accel = parseInt(document.getElementById("beltAccel").value || "400", 10);
+      const stepsValue = document.getElementById("beltSteps").value.trim();
+      const clearThreshValue = document.getElementById("beltClearThresh").value.trim();
+      const postDetectValue = document.getElementById("beltPostDetectSteps").value.trim();
+      const steps = stepsValue === "" ? null : parseInt(stepsValue, 10);
+      const clear_thresh = clearThreshValue === "" ? null : parseFloat(clearThreshValue);
+      const post_detect_steps = postDetectValue === "" ? null : parseInt(postDetectValue, 10);
+      await api("/api/belt/settings", "POST", {
+        speed,
+        accel,
+        steps,
+        clear_thresh,
+        post_detect_steps,
+        game_belt_enabled: nextEnabled,
+      });
+      await refresh();
     }
 
     async function toggleBelt() {
@@ -1080,6 +1107,7 @@ PAGE_HTML = """
     function renderBeltPanel(state) {
       const status = document.getElementById("beltStatusText");
       const button = document.getElementById("beltActionButton");
+      const modeButton = document.getElementById("gameBeltModeButton");
       if (!status || !button) return;
 
       const clearInput = document.getElementById("beltClearThresh");
@@ -1089,6 +1117,11 @@ PAGE_HTML = """
       }
       if (postDetectInput && document.activeElement !== postDetectInput && state.belt_post_detect_steps !== undefined) {
         postDetectInput.value = `${state.belt_post_detect_steps}`;
+      }
+      if (modeButton) {
+        const enabled = state.game_belt_enabled !== false;
+        modeButton.textContent = enabled ? "Game Belt: On" : "Game Belt: Manual Drop";
+        modeButton.className = enabled ? "secondary" : "warning";
       }
 
       if (state.belt_running) {
@@ -1210,11 +1243,17 @@ PAGE_HTML = """
         yellowCopy.textContent = state.prompt || "Tap the highlighted yellow slot to confirm it, or tap another slot to override it.";
       }
       if (state.awaiting_confirmation === "red") {
-        redCopy.textContent = state.prompt || "Place the red piece and let vision confirm it automatically.";
+        redCopy.textContent = state.prompt || (
+          state.game_belt_enabled === false
+            ? "Manually drop the red piece at the top and confirm it here."
+            : "Place the red piece and let vision confirm it automatically."
+        );
       }
       if (state.awaiting_confirmation !== "yellow" && state.awaiting_confirmation !== "red") {
         yellowCopy.textContent = "Detected a yellow move. Confirm it or correct the column.";
-        redCopy.textContent = "The computer has chosen a red column. Place the piece and let vision confirm it automatically.";
+        redCopy.textContent = state.game_belt_enabled === false
+          ? "The computer has chosen a red column. Manually drop the piece at the top and confirm it here."
+          : "The computer has chosen a red column. Place the piece and let vision confirm it automatically.";
       }
     }
 
