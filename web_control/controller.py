@@ -39,7 +39,7 @@ BELT_POST_DETECT_DELAY_MS = 500
 BELT_STAGE_SPEED = 500
 BELT_LAUNCH_SPEED = 4000
 BELT_LAUNCH_ACCEL = 400
-BELT_LAUNCH_STEPS = 1000
+BELT_LAUNCH_STEPS = 1500
 BELT_DETECT_INTEGRATION_MS = 24
 BELT_DETECT_SAMPLES = 1
 BELT_DETECT_STREAK = 1
@@ -832,6 +832,7 @@ class GameLoopWorker:
         self.depth = depth
         self.state_streak = state_streak
         self._deferred_commands = []
+        self._belt_feeder = None
 
     def _set_drop_servo(self, servo_pca, current_channel, visible_column):
         if servo_pca is None:
@@ -853,6 +854,15 @@ class GameLoopWorker:
             return None
         move_game_servo(servo_pca, current_channel, 0)
         return None
+
+    def _sanitize_robot_turn_board(self, confirmed_board, observed_board):
+        sanitized = np.copy(observed_board)
+        confirmed = np.asarray(confirmed_board)
+        # Never let new yellow pieces appear during the robot turn.
+        sanitized[(confirmed != 2) & (sanitized == 2)] = 0
+        # Preserve any already-confirmed yellow cells.
+        sanitized[confirmed == 2] = 2
+        return sanitized
 
     def _sync_tracker_board(self, tracker, board_state):
         tracker.board_state = np.copy(board_state)
@@ -989,6 +999,7 @@ class GameLoopWorker:
                 runtime_result = self._maybe_handle_runtime_command(
                     command,
                     pause_message="Game paused during yellow confirmation",
+                    on_pause=self._pause_runtime_subsystems,
                 )
                 if runtime_result == "stop":
                     return None
@@ -1043,6 +1054,7 @@ class GameLoopWorker:
                 runtime_result = self._maybe_handle_runtime_command(
                     command,
                     pause_message="Game paused during red confirmation",
+                    on_pause=self._pause_runtime_subsystems,
                 )
                 if runtime_result == "stop":
                     return None
@@ -1064,7 +1076,8 @@ class GameLoopWorker:
                 continue
 
             _, _, _ = tracker.process_frame(frame)
-            board_copy = np.copy(tracker.board_state)
+            raw_board_copy = np.copy(tracker.board_state)
+            board_copy = self._sanitize_robot_turn_board(confirmed_board, raw_board_copy)
 
             if boards_equal(board_copy, red_last_seen_board):
                 red_stable_streak += 1
@@ -1372,7 +1385,28 @@ class GameLoopWorker:
             message="Game paused; belt stopped",
         )
 
+    def _sync_belt_feeder_mode(self):
+        desired = bool(self.controller.get_state()["game_belt_enabled"])
+        if desired and self._belt_feeder is None:
+            feeder = GameLoopBeltFeeder(self.controller, self.stop_event)
+            feeder.start()
+            self._belt_feeder = feeder
+        elif not desired and self._belt_feeder is not None:
+            self._belt_feeder.stop()
+            self._belt_feeder = None
+
+    def _pause_runtime_subsystems(self):
+        if self._belt_feeder is not None:
+            self._belt_feeder.pause()
+
+    def _resume_runtime_subsystems(self):
+        if self._belt_feeder is not None:
+            self._belt_feeder.resume()
+
     def _complete_game(self, message, confirmed_board, winner=0):
+        if self._belt_feeder is not None:
+            self._belt_feeder.stop()
+            self._belt_feeder = None
         sorted_target = int(np.count_nonzero(confirmed_board != 0)) + 5
         self._move_gate_out_if_needed()
         self.controller.enable_sorting(max_sorted=sorted_target)
@@ -1440,14 +1474,20 @@ class GameLoopWorker:
                 message="Waiting for camera and tracker calibration",
                 error=None,
             )
+            self._sync_belt_feeder_mode()
 
             while not self.stop_event.is_set():
+                self._sync_belt_feeder_mode()
                 for command in self._drain_commands():
-                    runtime_result = self._maybe_handle_runtime_command(command)
+                    runtime_result = self._maybe_handle_runtime_command(
+                        command,
+                        on_pause=self._pause_runtime_subsystems,
+                    )
                     if runtime_result == "stop":
                         self.stop_event.set()
                         break
                     if runtime_result == "resume":
+                        self._resume_runtime_subsystems()
                         continue
                 if self.stop_event.is_set():
                     break
@@ -1542,6 +1582,7 @@ class GameLoopWorker:
                         prompt="Drop a YELLOW piece, or enter its column in the app.",
                         message="Waiting for YELLOW move",
                     )
+                    self._sync_belt_feeder_mode()
                     continue
 
                 self.confirmed_board = confirmed_board
@@ -1549,10 +1590,15 @@ class GameLoopWorker:
                 manual_applied = False
                 for command in self._drain_commands():
                     runtime_result = self._maybe_handle_runtime_command(command)
+                    runtime_result = self._maybe_handle_runtime_command(
+                        command,
+                        on_pause=self._pause_runtime_subsystems,
+                    )
                     if runtime_result == "stop":
                         self.stop_event.set()
                         break
                     if runtime_result == "resume":
+                        self._resume_runtime_subsystems()
                         continue
                     if command["type"] == "manual_human_move":
                         manual_board = self._handle_manual_move(confirmed_board, command["column"])
@@ -1647,8 +1693,18 @@ class GameLoopWorker:
                 )
                 use_belt = bool(self.controller.get_state()["game_belt_enabled"])
                 if use_belt:
-                    self._deliver_red_piece_with_belt()
+                    self._sync_belt_feeder_mode()
+                    if self._belt_feeder is None:
+                        raise RuntimeError("Game belt staging worker is unavailable")
+                    self._belt_feeder.launch_piece(
+                        int(self.controller.get_state()["belt_launch_speed"]),
+                        int(self.controller.get_state()["belt_launch_accel"]),
+                        int(self.controller.get_state()["belt_launch_steps"]),
+                    )
                 else:
+                    if self._belt_feeder is not None:
+                        self._belt_feeder.stop()
+                        self._belt_feeder = None
                     self.controller._update_state(
                         message=f"Manual red drop mode active for column {visible_red_col}",
                         belt_running=False,
@@ -1698,6 +1754,9 @@ class GameLoopWorker:
         except Exception as exc:
             self.controller._finalize_game_stop("Game loop failed", error=str(exc))
         finally:
+            if self._belt_feeder is not None:
+                self._belt_feeder.stop()
+                self._belt_feeder = None
             active_drop_servo_channel = self._reset_drop_servo(
                 servo_pca,
                 active_drop_servo_channel,
@@ -1706,6 +1765,268 @@ class GameLoopWorker:
                 cap.release()
             if servo_pca is not None:
                 servo_pca.deinit()
+
+class GameLoopBeltFeeder:
+    PORT = "/dev/serial0"
+
+    def __init__(self, controller, parent_stop_event):
+        self.controller = controller
+        self.parent_stop_event = parent_stop_event
+        self.stop_event = threading.Event()
+        self.commands = queue.Queue()
+        self.thread = None
+        self._launch_done = threading.Event()
+        self._launch_error = None
+        self._paused = False
+
+    def start(self):
+        if self.thread and self.thread.is_alive():
+            return
+        self.thread = threading.Thread(target=self.run, daemon=True, name="game-belt-feeder")
+        self.thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+        self.commands.put({"type": "stop"})
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=3.0)
+
+    def pause(self):
+        self.commands.put({"type": "pause"})
+
+    def resume(self):
+        self.commands.put({"type": "resume"})
+
+    def launch_piece(self, launch_speed, launch_accel, launch_steps, timeout_s=20.0):
+        self._launch_error = None
+        self._launch_done.clear()
+        self.commands.put(
+            {
+                "type": "launch",
+                "launch_speed": int(launch_speed),
+                "launch_accel": int(launch_accel),
+                "launch_steps": int(launch_steps),
+            }
+        )
+        if not self._launch_done.wait(timeout=timeout_s):
+            raise TimeoutError("Timed out waiting for staged belt launch")
+        if self._launch_error:
+            raise RuntimeError(self._launch_error)
+
+    def _wait_for(self, arduino, targets, timeout_s=5.0):
+        deadline = time.time() + timeout_s
+        while True:
+            if self.stop_event.is_set() or self.parent_stop_event.is_set():
+                raise RuntimeError("Game belt feeder stopping")
+            if time.time() > deadline:
+                raise TimeoutError(f"Timeout waiting for {targets}")
+            line = arduino.readline().decode(errors="ignore").strip()
+            line = "".join(ch for ch in line if ch.isprintable())
+            if line in targets:
+                return line
+
+    def _send_and_wait(self, arduino, command, targets, timeout_s=5.0, attempts=3, pre_delay_s=0.1):
+        last_error = None
+        for _ in range(attempts):
+            time.sleep(pre_delay_s)
+            arduino.write(f"{command}\n".encode())
+            try:
+                return self._wait_for(arduino, targets, timeout_s=timeout_s)
+            except TimeoutError as exc:
+                last_error = exc
+                arduino.reset_input_buffer()
+                time.sleep(0.2)
+        raise last_error
+
+    def _sync_controller(self, arduino, attempts=6, timeout_s=1.5):
+        for _ in range(attempts):
+            arduino.write(b"PING\n")
+            try:
+                self._wait_for(arduino, {"PONG"}, timeout_s=timeout_s)
+                time.sleep(0.3)
+                arduino.reset_input_buffer()
+                return
+            except TimeoutError:
+                arduino.reset_input_buffer()
+                time.sleep(0.3)
+        raise TimeoutError("Controller did not respond to PING")
+
+    def run(self):
+        arduino = None
+        sensor = None
+        stage_running = False
+        detect_streak = 0
+        pending_launch = None
+        piece_staged = False
+        try:
+            import serial
+            from FullSubsystems.belt import open_belt_tcs34725
+
+            state = self.controller.get_state()
+            sensor = open_belt_tcs34725(
+                integration_time_ms=int(state["belt_detect_integration_ms"]),
+                gain=4,
+            )
+
+            with self.controller._arduino_lock:
+                arduino = serial.Serial(self.PORT, 9600, timeout=1)
+                time.sleep(2)
+                arduino.reset_input_buffer()
+                arduino.reset_output_buffer()
+                self._sync_controller(arduino)
+
+                while not self.stop_event.is_set() and not self.parent_stop_event.is_set():
+                    while True:
+                        try:
+                            command = self.commands.get_nowait()
+                        except queue.Empty:
+                            break
+                        command_type = command["type"]
+                        if command_type == "stop":
+                            self.stop_event.set()
+                            break
+                        if command_type == "pause":
+                            self._paused = True
+                            if stage_running:
+                                self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0, attempts=1)
+                                stage_running = False
+                            self.controller._update_state(
+                                belt_running=False,
+                                belt_status="paused",
+                                belt_mode="continuous",
+                                message="Game paused; belt staging stopped",
+                            )
+                        elif command_type == "resume":
+                            self._paused = False
+                        elif command_type == "launch":
+                            pending_launch = command
+                            self.controller._update_state(
+                                message="Launch requested; waiting for staged red piece",
+                            )
+
+                    if self.stop_event.is_set() or self.parent_stop_event.is_set():
+                        break
+                    if self._paused:
+                        time.sleep(0.05)
+                        continue
+
+                    if piece_staged and pending_launch is None:
+                        self.controller._update_state(
+                            belt_running=False,
+                            belt_status="ready",
+                            belt_mode="continuous",
+                            belt_speed=BELT_STAGE_SPEED,
+                            message="Red piece staged at sensor and ready for launch",
+                        )
+                        time.sleep(0.02)
+                        continue
+
+                    if piece_staged and pending_launch is not None:
+                        launch_speed = int(pending_launch["launch_speed"])
+                        launch_accel = int(pending_launch["launch_accel"])
+                        launch_steps = int(pending_launch["launch_steps"])
+                        self._send_and_wait(arduino, f"SPEED {launch_speed}", {"OK", "ERR"})
+                        self._send_and_wait(arduino, f"ACCEL {launch_accel}", {"OK", "ERR"})
+                        self.controller._update_state(
+                            belt_running=True,
+                            belt_status="launching",
+                            belt_mode="steps",
+                            belt_speed=launch_speed,
+                            belt_accel=launch_accel,
+                            belt_steps=launch_steps,
+                            message=(
+                                f"Launching red piece at {launch_speed} speed, {launch_accel} accel, "
+                                f"{launch_steps} steps"
+                            ),
+                        )
+                        self._send_and_wait(arduino, f"RUNSTEPS {launch_steps}", {"DONE"}, timeout_s=12.0)
+                        self.controller._update_state(
+                            belt_running=False,
+                            belt_status="completed",
+                            belt_mode="steps",
+                            belt_speed=launch_speed,
+                            belt_accel=launch_accel,
+                            belt_steps=launch_steps,
+                            message=f"Staged red piece launched {launch_steps} steps at speed {launch_speed}",
+                        )
+                        pending_launch = None
+                        piece_staged = False
+                        detect_streak = 0
+                        self._launch_error = None
+                        self._launch_done.set()
+                        time.sleep(0.02)
+                        continue
+
+                    state = self.controller.get_state()
+                    sensor.integration_time = int(state["belt_detect_integration_ms"])
+                    clear_thresh = float(state["belt_clear_thresh"])
+                    detect_mode = state["belt_detect_mode"]
+                    detect_samples = int(state["belt_detect_samples"])
+                    detect_streak_target = int(state["belt_detect_streak"])
+
+                    sample = self.controller._read_belt_color_sample(
+                        sensor,
+                        count=detect_samples,
+                        delay_s=BELT_DETECT_SAMPLE_DELAY_S,
+                    )
+                    clear_value = sample["clear"]
+                    covered = (
+                        clear_value <= clear_thresh
+                        if detect_mode == "below"
+                        else clear_value >= clear_thresh
+                    )
+                    if covered:
+                        detect_streak += 1
+                    else:
+                        detect_streak = 0
+
+                    if detect_streak >= detect_streak_target:
+                        if stage_running:
+                            self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0, attempts=1)
+                            stage_running = False
+                        piece_staged = True
+                        time.sleep(0.02)
+                        continue
+
+                    if not stage_running:
+                        self._send_and_wait(arduino, f"SPEED {BELT_STAGE_SPEED}", {"OK", "ERR"})
+                        self._send_and_wait(arduino, f"ACCEL {int(state['belt_accel'])}", {"OK", "ERR"})
+                        self._send_and_wait(arduino, f"RUN {BELT_STAGE_SPEED}", {"OK", "ERR"})
+                        stage_running = True
+
+                    self.controller._update_state(
+                        belt_running=True,
+                        belt_status="staging",
+                        belt_mode="continuous",
+                        belt_speed=BELT_STAGE_SPEED,
+                        belt_accel=int(state["belt_accel"]),
+                        belt_error=None,
+                        message=(
+                            "No staged red piece yet; feeding slowly toward the sensor"
+                            if pending_launch is None
+                            else "Launch pending; feeding slowly until a red piece reaches the sensor"
+                        ),
+                    )
+        except Exception as exc:
+            self._launch_error = str(exc)
+            self._launch_done.set()
+            self.controller._update_state(
+                belt_running=False,
+                belt_status="error",
+                belt_error=str(exc),
+                message="Game belt feeder failed",
+                error=str(exc),
+            )
+        finally:
+            if arduino is not None:
+                try:
+                    self._send_and_wait(arduino, "STOP", {"OK"}, timeout_s=2.0, attempts=1)
+                except Exception:
+                    pass
+                try:
+                    arduino.close()
+                except Exception:
+                    pass
 
 
 class SorterCalibrationWorker:
@@ -1802,6 +2123,24 @@ class SorterCalibrationWorker:
                 label = self._wait_for_label()
                 if label == "q":
                     break
+                if label == "a":
+                    move_servo(pca, SERVO_CHANNEL, LEFT_PICKUP, max_angle=MAX_ANGLE, offset=OFFSET)
+                    time.sleep(0.18)
+                    move_servo(pca, SERVO_CHANNEL, RIGHT_PICKUP, max_angle=MAX_ANGLE, offset=OFFSET)
+                    time.sleep(0.18)
+                    move_servo(pca, SERVO_CHANNEL, DETECT, max_angle=MAX_ANGLE, offset=OFFSET)
+                    time.sleep(DETECT_SETTLE)
+                    self.controller._update_state(
+                        sorter_calibration_running=True,
+                        sorter_calibration_prompt=(
+                            "Agitated the sorter cam. Label the current piece as red, yellow, none, or finish calibration."
+                        ),
+                        sorter_calibration_sample=sample,
+                        sorter_calibration_counts=counts,
+                        message="Sorter calibration agitated the cam",
+                        error=None,
+                    )
+                    continue
                 if label not in {"r", "y", "n"}:
                     continue
 

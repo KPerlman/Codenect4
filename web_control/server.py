@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03l"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04a"
 
 
 class StartGameRequest(BaseModel):
@@ -709,6 +709,7 @@ PAGE_HTML = """
             <button id="sorterLabelRed" class="danger" onclick="labelSorterCalibration('r')">Red</button>
             <button id="sorterLabelYellow" class="warning" onclick="labelSorterCalibration('y')">Yellow</button>
             <button id="sorterLabelNone" class="secondary" onclick="labelSorterCalibration('n')">None</button>
+            <button id="sorterLabelAgitate" class="secondary" onclick="labelSorterCalibration('a')">Agitate</button>
             <button id="sorterLabelQuit" class="ok" onclick="labelSorterCalibration('q')">Quit</button>
           </div>
         </div>
@@ -775,7 +776,7 @@ PAGE_HTML = """
             </div>
             <div class="field">
               <label for="beltLaunchSteps">Launch Steps</label>
-              <input id="beltLaunchSteps" type="number" inputmode="numeric" value="1000">
+              <input id="beltLaunchSteps" type="number" inputmode="numeric" value="1500">
             </div>
           </div>
           <div class="controls">
@@ -1422,6 +1423,7 @@ PAGE_HTML = """
       const redBtn = document.getElementById("sorterLabelRed");
       const yellowBtn = document.getElementById("sorterLabelYellow");
       const noneBtn = document.getElementById("sorterLabelNone");
+      const agitateBtn = document.getElementById("sorterLabelAgitate");
       const quitBtn = document.getElementById("sorterLabelQuit");
       const calibrationCounts = state.sorter_calibration_counts || { red: 0, yellow: 0, none: 0 };
       const active = !!state.sorter_calibration_running;
@@ -1442,6 +1444,7 @@ PAGE_HTML = """
       redBtn.disabled = !active;
       yellowBtn.disabled = !active;
       noneBtn.disabled = !active;
+      agitateBtn.disabled = !active;
       quitBtn.disabled = !active;
     }
 
