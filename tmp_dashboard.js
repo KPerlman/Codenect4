@@ -1,5 +1,6 @@
 
     let latestState = null;
+    let latestRuntimeLog = [];
     let healthState = null;
 
     async function api(path, method = "GET", body = null) {
@@ -65,8 +66,8 @@
     }
 
     async function copyRuntimeLog() {
-      if (!latestState || !Array.isArray(latestState.runtime_log)) return;
-      const payload = latestState.runtime_log.join("\n");
+      if (!Array.isArray(latestRuntimeLog)) return;
+      const payload = latestRuntimeLog.join("\n");
       try {
         await navigator.clipboard.writeText(payload);
       } catch (err) {
@@ -758,10 +759,9 @@
       }
     }
 
-    function renderRuntimeLog(state) {
+    function renderRuntimeLog(lines) {
       const logPanel = document.getElementById("runtimeLogPanel");
       if (!logPanel) return;
-      const lines = Array.isArray(state.runtime_log) ? state.runtime_log : [];
       const nextText = lines.length ? lines.join("\n") : "No runtime log entries yet.";
       if (logPanel.textContent !== nextText) {
         const nearBottom = (logPanel.scrollHeight - logPanel.scrollTop - logPanel.clientHeight) < 24;
@@ -779,7 +779,6 @@
         renderMeta(latestState);
         renderStateBlocks(latestState);
         renderGameControls(latestState);
-        renderRuntimeLog(latestState);
         renderBeltPanel(latestState);
         renderBeltCalibration(latestState);
         renderGatePanel(latestState);
@@ -788,6 +787,16 @@
         renderBoard(latestState.current_board);
       } catch (err) {
         console.error("Dashboard refresh failed", err);
+      }
+    }
+
+    async function refreshRuntimeLog() {
+      try {
+        const payload = await api("/api/runtime/log");
+        latestRuntimeLog = Array.isArray(payload.runtime_log) ? payload.runtime_log : [];
+        renderRuntimeLog(latestRuntimeLog);
+      } catch (err) {
+        console.error("Runtime log refresh failed", err);
       }
     }
 
@@ -801,7 +810,12 @@
       }
     }
 
-    try {
+    let dashboardBootstrapped = false;
+
+    function bootstrapDashboard() {
+      if (dashboardBootstrapped) return;
+      dashboardBootstrapped = true;
+
       ["beltSpeed", "beltAccel", "beltSteps", "beltClearThresh", "beltPostDetectDelayMs", "beltDetectIntegrationMs", "beltDetectSamples", "beltDetectStreak", "beltLaunchSpeed", "beltLaunchAccel", "beltLaunchSteps"].forEach((id) => {
         const el = document.getElementById(id);
         if (el) {
@@ -811,12 +825,20 @@
         }
       });
 
-      window.addEventListener("load", () => {
-        refreshHealth().catch((err) => console.error("Initial health refresh failed", err));
-        refresh().catch((err) => console.error("Initial dashboard refresh failed", err));
-        setInterval(() => refreshHealth().catch(() => {}), 5000);
-        setInterval(() => refresh().catch(() => {}), 800);
-      });
+      refreshHealth().catch((err) => console.error("Initial health refresh failed", err));
+      refresh().catch((err) => console.error("Initial dashboard refresh failed", err));
+      refreshRuntimeLog().catch((err) => console.error("Initial runtime log refresh failed", err));
+      setInterval(() => refreshHealth().catch(() => {}), 5000);
+      setInterval(() => refresh().catch(() => {}), 800);
+      setInterval(() => refreshRuntimeLog().catch(() => {}), 3000);
+    }
+
+    try {
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", bootstrapDashboard, { once: true });
+      } else {
+        bootstrapDashboard();
+      }
     } catch (err) {
       console.error("Dashboard bootstrap failed", err);
     }

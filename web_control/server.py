@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04g"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04j"
 
 
 class StartGameRequest(BaseModel):
@@ -75,6 +75,11 @@ class GateStartRequest(BaseModel):
 @app.get("/api/state")
 def api_state():
     return controller.get_state()
+
+
+@app.get("/api/runtime/log")
+def api_runtime_log():
+    return controller.get_runtime_log()
 
 
 @app.get("/health")
@@ -900,6 +905,7 @@ PAGE_HTML = """
 
   <script>
     let latestState = null;
+    let latestRuntimeLog = [];
     let healthState = null;
 
     async function api(path, method = "GET", body = null) {
@@ -965,8 +971,8 @@ PAGE_HTML = """
     }
 
     async function copyRuntimeLog() {
-      if (!latestState || !Array.isArray(latestState.runtime_log)) return;
-      const payload = latestState.runtime_log.join("\n");
+      if (!Array.isArray(latestRuntimeLog)) return;
+      const payload = latestRuntimeLog.join("\\n");
       try {
         await navigator.clipboard.writeText(payload);
       } catch (err) {
@@ -1279,6 +1285,7 @@ PAGE_HTML = """
     }
 
     function bannerConfig(state) {
+      const displayValue = (value, fallback) => (value === null || value === undefined ? fallback : value);
       if (state.sorter_calibration_running) {
         return {
           className: "banner waiting",
@@ -1289,21 +1296,21 @@ PAGE_HTML = """
       if (state.awaiting_confirmation === "yellow") {
         return {
           className: "banner waiting",
-          title: `Yellow move detected in column ${state.detected_yellow_column ?? "-"}`,
+          title: `Yellow move detected in column ${displayValue(state.detected_yellow_column, "-")}`,
           text: state.prompt || "Confirm the detected yellow move or correct it.",
         };
       }
       if (state.awaiting_confirmation === "red") {
         return {
           className: "banner waiting",
-          title: `Place red in column ${state.suggested_red_column ?? "-"}`,
+          title: `Place red in column ${displayValue(state.suggested_red_column, "-")}`,
           text: state.prompt || "Drop the red piece on the real board and let vision confirm it.",
         };
       }
       if (state.game_status === "ready_for_launch") {
         return {
           className: "banner waiting",
-          title: `Ready for launch: column ${state.suggested_red_column ?? "-"}`,
+          title: `Ready for launch: column ${displayValue(state.suggested_red_column, "-")}`,
           text: state.prompt || "The robot has chosen a column and is preparing the red launch.",
         };
       }
@@ -1405,9 +1412,9 @@ PAGE_HTML = """
       document.getElementById("stateTrackerActive").textContent = state.tracker_active ? "yes" : "no";
       document.getElementById("stateTrackerCalibrated").textContent = state.tracker_calibrated ? "yes" : "no";
 
-      document.getElementById("stateYellowCount").textContent = state.confirmed_yellow_count ?? 0;
-      document.getElementById("stateRedCount").textContent = state.confirmed_red_count ?? 0;
-      document.getElementById("statePendingYellow").textContent = state.pending_yellow_count ?? 0;
+      document.getElementById("stateYellowCount").textContent = state.confirmed_yellow_count === null || state.confirmed_yellow_count === undefined ? 0 : state.confirmed_yellow_count;
+      document.getElementById("stateRedCount").textContent = state.confirmed_red_count === null || state.confirmed_red_count === undefined ? 0 : state.confirmed_red_count;
+      document.getElementById("statePendingYellow").textContent = state.pending_yellow_count === null || state.pending_yellow_count === undefined ? 0 : state.pending_yellow_count;
       document.getElementById("stateAwaiting").textContent = state.awaiting_confirmation || "none";
 
       document.getElementById("stateCameraSource").textContent = state.camera_source || "n/a";
@@ -1485,7 +1492,7 @@ PAGE_HTML = """
 
       if (state.belt_running) {
         const modeText = state.belt_mode === "steps"
-          ? `Running ${state.belt_steps ?? "-"} steps at ${state.belt_speed} / accel ${state.belt_accel}.`
+          ? `Running ${state.belt_steps === null || state.belt_steps === undefined ? "-" : state.belt_steps} steps at ${state.belt_speed} / accel ${state.belt_accel}.`
           : `Running continuously at ${state.belt_speed} / accel ${state.belt_accel}.`;
         status.textContent = modeText;
         button.textContent = "Stop Belt";
@@ -1532,7 +1539,7 @@ PAGE_HTML = """
         sample.textContent = "No sample yet.";
       }
       const c = state.belt_calibration_counts || { empty: 0, piece: 0 };
-      counts.textContent = `empty ${c.empty ?? 0} | piece ${c.piece ?? 0}`;
+      counts.textContent = `empty ${c.empty === null || c.empty === undefined ? 0 : c.empty} | piece ${c.piece === null || c.piece === undefined ? 0 : c.piece}`;
       emptyBtn.disabled = !active;
       pieceBtn.disabled = !active;
       finishBtn.disabled = !active;
@@ -1546,7 +1553,7 @@ PAGE_HTML = """
 
       if (state.gate_running) {
         const modeText = state.gate_mode === "steps"
-          ? `Running ${state.gate_steps ?? "-"} steps at ${state.gate_speed} / accel ${state.gate_accel}.`
+          ? `Running ${state.gate_steps === null || state.gate_steps === undefined ? "-" : state.gate_steps} steps at ${state.gate_speed} / accel ${state.gate_accel}.`
           : `Running continuously at ${state.gate_speed} / accel ${state.gate_accel}.`;
         status.textContent = modeText;
         button.textContent = "Stop Gate";
@@ -1589,7 +1596,7 @@ PAGE_HTML = """
         sample.textContent = "No sample yet.";
       }
 
-      counts.textContent = `red ${calibrationCounts.red ?? 0} | yellow ${calibrationCounts.yellow ?? 0} | none ${calibrationCounts.none ?? 0}`;
+      counts.textContent = `red ${calibrationCounts.red === null || calibrationCounts.red === undefined ? 0 : calibrationCounts.red} | yellow ${calibrationCounts.yellow === null || calibrationCounts.yellow === undefined ? 0 : calibrationCounts.yellow} | none ${calibrationCounts.none === null || calibrationCounts.none === undefined ? 0 : calibrationCounts.none}`;
       redBtn.disabled = !active;
       yellowBtn.disabled = !active;
       noneBtn.disabled = !active;
@@ -1658,11 +1665,10 @@ PAGE_HTML = """
       }
     }
 
-    function renderRuntimeLog(state) {
+    function renderRuntimeLog(lines) {
       const logPanel = document.getElementById("runtimeLogPanel");
       if (!logPanel) return;
-      const lines = Array.isArray(state.runtime_log) ? state.runtime_log : [];
-      const nextText = lines.length ? lines.join("\n") : "No runtime log entries yet.";
+      const nextText = lines.length ? lines.join("\\n") : "No runtime log entries yet.";
       if (logPanel.textContent !== nextText) {
         const nearBottom = (logPanel.scrollHeight - logPanel.scrollTop - logPanel.clientHeight) < 24;
         logPanel.textContent = nextText;
@@ -1679,7 +1685,6 @@ PAGE_HTML = """
         renderMeta(latestState);
         renderStateBlocks(latestState);
         renderGameControls(latestState);
-        renderRuntimeLog(latestState);
         renderBeltPanel(latestState);
         renderBeltCalibration(latestState);
         renderGatePanel(latestState);
@@ -1688,6 +1693,16 @@ PAGE_HTML = """
         renderBoard(latestState.current_board);
       } catch (err) {
         console.error("Dashboard refresh failed", err);
+      }
+    }
+
+    async function refreshRuntimeLog() {
+      try {
+        const payload = await api("/api/runtime/log");
+        latestRuntimeLog = Array.isArray(payload.runtime_log) ? payload.runtime_log : [];
+        renderRuntimeLog(latestRuntimeLog);
+      } catch (err) {
+        console.error("Runtime log refresh failed", err);
       }
     }
 
@@ -1701,7 +1716,12 @@ PAGE_HTML = """
       }
     }
 
-    try {
+    let dashboardBootstrapped = false;
+
+    function bootstrapDashboard() {
+      if (dashboardBootstrapped) return;
+      dashboardBootstrapped = true;
+
       ["beltSpeed", "beltAccel", "beltSteps", "beltClearThresh", "beltPostDetectDelayMs", "beltDetectIntegrationMs", "beltDetectSamples", "beltDetectStreak", "beltLaunchSpeed", "beltLaunchAccel", "beltLaunchSteps"].forEach((id) => {
         const el = document.getElementById(id);
         if (el) {
@@ -1711,12 +1731,20 @@ PAGE_HTML = """
         }
       });
 
-      window.addEventListener("load", () => {
-        refreshHealth().catch((err) => console.error("Initial health refresh failed", err));
-        refresh().catch((err) => console.error("Initial dashboard refresh failed", err));
-        setInterval(() => refreshHealth().catch(() => {}), 5000);
-        setInterval(() => refresh().catch(() => {}), 800);
-      });
+      refreshHealth().catch((err) => console.error("Initial health refresh failed", err));
+      refresh().catch((err) => console.error("Initial dashboard refresh failed", err));
+      refreshRuntimeLog().catch((err) => console.error("Initial runtime log refresh failed", err));
+      setInterval(() => refreshHealth().catch(() => {}), 5000);
+      setInterval(() => refresh().catch(() => {}), 800);
+      setInterval(() => refreshRuntimeLog().catch(() => {}), 3000);
+    }
+
+    try {
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", bootstrapDashboard, { once: true });
+      } else {
+        bootstrapDashboard();
+      }
     } catch (err) {
       console.error("Dashboard bootstrap failed", err);
     }

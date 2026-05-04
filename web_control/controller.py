@@ -44,7 +44,7 @@ BELT_DETECT_INTEGRATION_MS = 12
 BELT_DETECT_SAMPLES = 1
 BELT_DETECT_STREAK = 1
 BELT_DETECT_SAMPLE_DELAY_S = 0.005
-RUNTIME_LOG_LIMIT = 500
+RUNTIME_LOG_LIMIT = 200
 
 
 def move_servo_zero_position(pca, channel, angle, max_angle=180, offset=0):
@@ -210,7 +210,6 @@ class SharedState:
             "gate_accel": self.gate_accel,
             "gate_steps": self.gate_steps,
             "gate_error": self.gate_error,
-            "runtime_log": self.runtime_log,
             "updated_at": self.updated_at,
         }
 
@@ -681,6 +680,10 @@ class RobotWebController:
                 if self._state.message == "Sorter enabled":
                     self._state.message = "Sorter completed"
             return self._state.to_dict()
+
+    def get_runtime_log(self):
+        with self._lock:
+            return {"runtime_log": list(self._state.runtime_log)}
 
     def _update_state(self, **changes):
         with self._lock:
