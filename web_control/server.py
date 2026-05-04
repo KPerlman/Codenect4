@@ -185,6 +185,11 @@ def api_reset_game(request: StartGameRequest):
     )
 
 
+@app.post("/api/game/retry")
+def api_retry_game():
+    return controller.retry_game()
+
+
 @app.post("/api/runtime/reboot")
 def api_reboot_runtime():
     return controller.reboot_runtime()
@@ -745,6 +750,7 @@ PAGE_HTML = """
           <div class="controls">
             <button id="primaryGameButton" onclick="handlePrimaryGameAction()">Start Game</button>
             <button id="inProgressSetupButton" class="warning" onclick="startInProgressSetup()">Start In-Progress Game</button>
+            <button id="retryGameButton" class="warning hidden" onclick="retryGame()">Retry Game</button>
             <button class="warning" onclick="resetGame()">Reset Game</button>
             <button class="secondary" onclick="copyRuntimeLog()">Copy Log</button>
           </div>
@@ -1082,6 +1088,12 @@ PAGE_HTML = """
     async function resetGame() {
       await syncBeltSettings();
       await api("/api/game/reset", "POST", { width: 640, height: 480, depth: 5, state_streak: 3 });
+      await refresh();
+    }
+
+    async function retryGame() {
+      await syncBeltSettings();
+      await api("/api/game/retry", "POST");
       await refresh();
     }
 
@@ -1483,8 +1495,8 @@ PAGE_HTML = """
       if (state.game_status === "paused") {
         return {
           className: "banner waiting",
-          title: "Game paused",
-          text: state.message || "Resume when you're ready.",
+          title: state.retry_available ? "Game paused by error" : "Game paused",
+          text: state.error || state.message || "Resume when you're ready.",
         };
       }
       if (state.game_status === "waiting_human_move") {
@@ -1800,6 +1812,7 @@ PAGE_HTML = """
     function renderGameControls(state) {
       const primaryButton = document.getElementById("primaryGameButton");
       const inProgressButton = document.getElementById("inProgressSetupButton");
+      const retryButton = document.getElementById("retryGameButton");
       const inProgressControls = document.getElementById("inProgressSetupControls");
       const inProgressTurnSelect = document.getElementById("inProgressTurnSelect");
       const readyControls = document.getElementById("beltReadyControls");
@@ -1824,6 +1837,9 @@ PAGE_HTML = """
       if (inProgressButton) {
         inProgressButton.disabled = !!state.game_running;
         inProgressButton.textContent = state.board_setup_mode ? "Editing In-Progress Board" : "Start In-Progress Game";
+      }
+      if (retryButton) {
+        retryButton.classList.toggle("hidden", !(state.retry_available && !state.game_running));
       }
       if (inProgressControls) {
         inProgressControls.classList.toggle("hidden", !state.board_setup_mode);

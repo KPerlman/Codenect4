@@ -86,6 +86,7 @@ def board_to_lists(board_state):
 class SharedState:
     game_running: bool = False
     game_paused: bool = False
+    retry_available: bool = False
     game_status: str = "idle"
     game_phase: str = "idle"
     turn_state: str = "idle"
@@ -157,6 +158,7 @@ class SharedState:
         return {
             "game_running": self.game_running,
             "game_paused": self.game_paused,
+            "retry_available": self.retry_available,
             "game_status": self.game_status,
             "game_phase": self.game_phase,
             "turn_state": self.turn_state,
@@ -250,6 +252,7 @@ class RobotWebController:
         self._pending_start_turn = "yellow"
         self._latest_camera_frame_b64 = None
         self._latest_camera_frame_source = None
+        self._retry_context = None
         self._append_log_locked("Runtime controller initialized")
 
     def _append_log_locked(self, text):
@@ -269,6 +272,7 @@ class RobotWebController:
             "game_status": "Game status",
             "game_phase": "Game phase",
             "turn_state": "Turn state",
+            "retry_available": "Retry available",
             "board_setup_mode": "Board setup mode",
             "board_setup_turn": "Board setup turn",
             "awaiting_confirmation": "Awaiting confirmation",
@@ -765,6 +769,39 @@ class RobotWebController:
             self._log_state_changes_locked(previous_values, changes)
             self._state.updated_at = time.time()
 
+    def _set_retry_context(self, *, board, turn, camera, device, width, height, depth, state_streak):
+        self._retry_context = {
+            "board": None if board is None else np.asarray(board, dtype=int).tolist(),
+            "turn": "red" if str(turn).lower() == "red" else "yellow",
+            "camera": camera,
+            "device": device,
+            "width": width,
+            "height": height,
+            "depth": depth,
+            "state_streak": state_streak,
+        }
+
+    def retry_game(self):
+        with self._lock:
+            retry_context = self._retry_context
+            if retry_context is None:
+                self._update_state(message="No recoverable game snapshot is available to retry")
+                return self._state.to_dict()
+            if self._game_thread and self._game_thread.is_alive():
+                self._update_state(message="Stop or finish the current game before retrying")
+                return self._state.to_dict()
+        board = np.asarray(retry_context["board"], dtype=int) if retry_context["board"] is not None else None
+        return self.start_game(
+            camera=retry_context["camera"],
+            device=retry_context["device"],
+            width=retry_context["width"],
+            height=retry_context["height"],
+            depth=retry_context["depth"],
+            state_streak=retry_context["state_streak"],
+            initial_board=board,
+            initial_turn=retry_context["turn"],
+        )
+
     def _normalized_setup_turn(self, turn):
         return "red" if str(turn).lower() == "red" else "yellow"
 
@@ -901,9 +938,11 @@ class RobotWebController:
             self._game_thread.start()
             self._pending_start_board = None
             self._pending_start_turn = "yellow"
+            self._retry_context = None
             self._update_state(
                 game_running=True,
                 game_paused=False,
+                retry_available=False,
                 game_status="starting",
                 board_setup_mode=False,
                 board_setup_turn=normalized_turn,
@@ -971,6 +1010,7 @@ class RobotWebController:
         self._update_state(
             game_running=False,
             game_paused=False,
+            retry_available=False,
             game_status="stopped",
             awaiting_confirmation=None,
             prompt=None,
@@ -1006,6 +1046,7 @@ class RobotWebController:
         self._update_state(
             game_running=False,
             game_paused=False,
+            retry_available=False,
             game_status="idle",
             game_phase="idle",
             turn_state="idle",
@@ -1045,6 +1086,7 @@ class RobotWebController:
         with self._lock:
             self._latest_camera_frame_b64 = None
             self._latest_camera_frame_source = None
+            self._retry_context = None
         return self.get_state()
 
     def enable_sorting(self, max_sorted=None):
@@ -1195,11 +1237,52 @@ class RobotWebController:
         self._update_state(
             game_running=False,
             game_paused=False,
+            retry_available=False,
             game_status="stopped" if error is None else "error",
             awaiting_confirmation=None,
             prompt=None,
             suggested_red_column=None,
             detected_yellow_column=None,
+            message=message,
+            error=error,
+        )
+
+    def _finalize_game_retry_pause(
+        self,
+        message,
+        error,
+        *,
+        board,
+        turn,
+        camera,
+        device,
+        width,
+        height,
+        depth,
+        state_streak,
+    ):
+        with self._lock:
+            self._set_retry_context(
+                board=board,
+                turn=turn,
+                camera=camera,
+                device=device,
+                width=width,
+                height=height,
+                depth=depth,
+                state_streak=state_streak,
+            )
+        if board is not None:
+            self._set_setup_board_state(np.asarray(board, dtype=int))
+        self._update_state(
+            game_running=False,
+            game_paused=True,
+            retry_available=True,
+            game_status="paused",
+            game_phase="paused",
+            turn_state="paused_error",
+            awaiting_confirmation=None,
+            prompt="Retry when you're ready.",
             message=message,
             error=error,
         )
@@ -2247,7 +2330,18 @@ class GameLoopWorker:
             if self.stop_event.is_set():
                 self.controller._finalize_game_stop("Game loop stopped")
         except Exception as exc:
-            self.controller._finalize_game_stop("Game loop failed", error=str(exc))
+            self.controller._finalize_game_retry_pause(
+                "Game paused due to an error. Retry to continue from the same board state.",
+                str(exc),
+                board=confirmed_board,
+                turn=current_turn,
+                camera=self.camera,
+                device=self.device,
+                width=self.width,
+                height=self.height,
+                depth=self.depth,
+                state_streak=self.state_streak,
+            )
         finally:
             self._disable_belt_feeder()
             active_drop_servo_channel = self._reset_drop_servo(
