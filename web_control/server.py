@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03j"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-03k"
 
 
 class StartGameRequest(BaseModel):
@@ -49,6 +49,9 @@ class BeltSettingsRequest(BaseModel):
     steps: int | None = None
     clear_thresh: float | None = None
     post_detect_delay_ms: int | None = None
+    detect_integration_ms: int | None = None
+    detect_samples: int | None = None
+    detect_streak: int | None = None
     game_belt_enabled: bool | None = None
 
 
@@ -173,6 +176,9 @@ def api_belt_settings(request: BeltSettingsRequest):
         steps=request.steps,
         clear_thresh=request.clear_thresh,
         post_detect_delay_ms=request.post_detect_delay_ms,
+        detect_integration_ms=request.detect_integration_ms,
+        detect_samples=request.detect_samples,
+        detect_streak=request.detect_streak,
         game_belt_enabled=request.game_belt_enabled,
     )
 
@@ -738,6 +744,20 @@ PAGE_HTML = """
               <button id="gameBeltModeButton" class="secondary" onclick="toggleGameBeltMode()">Game Belt: On</button>
             </div>
           </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="beltDetectIntegrationMs">Detect Integration (ms)</label>
+              <input id="beltDetectIntegrationMs" type="number" inputmode="numeric" value="24">
+            </div>
+            <div class="field">
+              <label for="beltDetectSamples">Detect Samples</label>
+              <input id="beltDetectSamples" type="number" inputmode="numeric" value="1">
+            </div>
+            <div class="field">
+              <label for="beltDetectStreak">Detect Streak</label>
+              <input id="beltDetectStreak" type="number" inputmode="numeric" value="1">
+            </div>
+          </div>
           <div class="controls">
             <button class="secondary" onclick="startBeltCalibration()">Calibrate Belt TCS</button>
           </div>
@@ -855,11 +875,19 @@ PAGE_HTML = """
       const stepsValue = document.getElementById("beltSteps").value.trim();
       const clearThreshValue = document.getElementById("beltClearThresh").value.trim();
       const postDetectValue = document.getElementById("beltPostDetectDelayMs").value.trim();
+      const detectIntegrationValue = document.getElementById("beltDetectIntegrationMs").value.trim();
+      const detectSamplesValue = document.getElementById("beltDetectSamples").value.trim();
+      const detectStreakValue = document.getElementById("beltDetectStreak").value.trim();
       const game_belt_enabled = !(latestState && latestState.game_belt_enabled === false);
       const steps = stepsValue === "" ? null : parseInt(stepsValue, 10);
       const clear_thresh = clearThreshValue === "" ? null : parseFloat(clearThreshValue);
       const post_detect_delay_ms = postDetectValue === "" ? null : parseInt(postDetectValue, 10);
-      await api("/api/belt/settings", "POST", { speed, accel, steps, clear_thresh, post_detect_delay_ms, game_belt_enabled });
+      const detect_integration_ms = detectIntegrationValue === "" ? null : parseInt(detectIntegrationValue, 10);
+      const detect_samples = detectSamplesValue === "" ? null : parseInt(detectSamplesValue, 10);
+      const detect_streak = detectStreakValue === "" ? null : parseInt(detectStreakValue, 10);
+      await api("/api/belt/settings", "POST", {
+        speed, accel, steps, clear_thresh, post_detect_delay_ms, detect_integration_ms, detect_samples, detect_streak, game_belt_enabled
+      });
     }
 
     async function toggleGameBeltMode() {
@@ -869,15 +897,24 @@ PAGE_HTML = """
       const stepsValue = document.getElementById("beltSteps").value.trim();
       const clearThreshValue = document.getElementById("beltClearThresh").value.trim();
       const postDetectValue = document.getElementById("beltPostDetectDelayMs").value.trim();
+      const detectIntegrationValue = document.getElementById("beltDetectIntegrationMs").value.trim();
+      const detectSamplesValue = document.getElementById("beltDetectSamples").value.trim();
+      const detectStreakValue = document.getElementById("beltDetectStreak").value.trim();
       const steps = stepsValue === "" ? null : parseInt(stepsValue, 10);
       const clear_thresh = clearThreshValue === "" ? null : parseFloat(clearThreshValue);
       const post_detect_delay_ms = postDetectValue === "" ? null : parseInt(postDetectValue, 10);
+      const detect_integration_ms = detectIntegrationValue === "" ? null : parseInt(detectIntegrationValue, 10);
+      const detect_samples = detectSamplesValue === "" ? null : parseInt(detectSamplesValue, 10);
+      const detect_streak = detectStreakValue === "" ? null : parseInt(detectStreakValue, 10);
       await api("/api/belt/settings", "POST", {
         speed,
         accel,
         steps,
         clear_thresh,
         post_detect_delay_ms,
+        detect_integration_ms,
+        detect_samples,
+        detect_streak,
         game_belt_enabled: nextEnabled,
       });
       await refresh();
@@ -1215,11 +1252,23 @@ PAGE_HTML = """
 
       const clearInput = document.getElementById("beltClearThresh");
       const postDetectInput = document.getElementById("beltPostDetectDelayMs");
+      const detectIntegrationInput = document.getElementById("beltDetectIntegrationMs");
+      const detectSamplesInput = document.getElementById("beltDetectSamples");
+      const detectStreakInput = document.getElementById("beltDetectStreak");
       if (clearInput && document.activeElement !== clearInput && state.belt_clear_thresh !== undefined) {
         clearInput.value = Number(state.belt_clear_thresh).toFixed(1);
       }
       if (postDetectInput && document.activeElement !== postDetectInput && state.belt_post_detect_delay_ms !== undefined) {
         postDetectInput.value = `${state.belt_post_detect_delay_ms}`;
+      }
+      if (detectIntegrationInput && document.activeElement !== detectIntegrationInput && state.belt_detect_integration_ms !== undefined) {
+        detectIntegrationInput.value = `${state.belt_detect_integration_ms}`;
+      }
+      if (detectSamplesInput && document.activeElement !== detectSamplesInput && state.belt_detect_samples !== undefined) {
+        detectSamplesInput.value = `${state.belt_detect_samples}`;
+      }
+      if (detectStreakInput && document.activeElement !== detectStreakInput && state.belt_detect_streak !== undefined) {
+        detectStreakInput.value = `${state.belt_detect_streak}`;
       }
       if (modeButton) {
         const enabled = state.game_belt_enabled !== false;
@@ -1413,7 +1462,7 @@ PAGE_HTML = """
       }
     }
 
-    ["beltSpeed", "beltAccel", "beltSteps", "beltClearThresh", "beltPostDetectDelayMs"].forEach((id) => {
+    ["beltSpeed", "beltAccel", "beltSteps", "beltClearThresh", "beltPostDetectDelayMs", "beltDetectIntegrationMs", "beltDetectSamples", "beltDetectStreak"].forEach((id) => {
       const el = document.getElementById(id);
       if (el) {
         el.addEventListener("change", () => {

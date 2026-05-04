@@ -38,6 +38,10 @@ BELT_CLEAR_THRESH = 2500.0
 BELT_POST_DETECT_DELAY_MS = 500
 BELT_GAME_SPEED = 4000
 BELT_GAME_ACCEL = 400
+BELT_DETECT_INTEGRATION_MS = 24
+BELT_DETECT_SAMPLES = 1
+BELT_DETECT_STREAK = 1
+BELT_DETECT_SAMPLE_DELAY_S = 0.005
 
 
 def move_servo_zero_position(pca, channel, angle, max_angle=180, offset=0):
@@ -114,6 +118,9 @@ class SharedState:
     belt_clear_thresh: float = BELT_CLEAR_THRESH
     belt_detect_mode: str = "below"
     belt_post_detect_delay_ms: int = BELT_POST_DETECT_DELAY_MS
+    belt_detect_integration_ms: int = BELT_DETECT_INTEGRATION_MS
+    belt_detect_samples: int = BELT_DETECT_SAMPLES
+    belt_detect_streak: int = BELT_DETECT_STREAK
     belt_calibration_running: bool = False
     belt_calibration_prompt: str | None = None
     belt_calibration_last_sample: dict[str, float] | None = None
@@ -172,6 +179,9 @@ class SharedState:
             "belt_clear_thresh": self.belt_clear_thresh,
             "belt_detect_mode": self.belt_detect_mode,
             "belt_post_detect_delay_ms": self.belt_post_detect_delay_ms,
+            "belt_detect_integration_ms": self.belt_detect_integration_ms,
+            "belt_detect_samples": self.belt_detect_samples,
+            "belt_detect_streak": self.belt_detect_streak,
             "belt_calibration_running": self.belt_calibration_running,
             "belt_calibration_prompt": self.belt_calibration_prompt,
             "belt_calibration_last_sample": self.belt_calibration_last_sample,
@@ -346,6 +356,9 @@ class RobotWebController:
         steps=None,
         clear_thresh=None,
         post_detect_delay_ms=None,
+        detect_integration_ms=None,
+        detect_samples=None,
+        detect_streak=None,
         game_belt_enabled=None,
     ):
         changes = {}
@@ -358,6 +371,12 @@ class RobotWebController:
             changes["belt_clear_thresh"] = float(clear_thresh)
         if post_detect_delay_ms is not None:
             changes["belt_post_detect_delay_ms"] = int(post_detect_delay_ms)
+        if detect_integration_ms is not None:
+            changes["belt_detect_integration_ms"] = max(2, int(detect_integration_ms))
+        if detect_samples is not None:
+            changes["belt_detect_samples"] = max(1, int(detect_samples))
+        if detect_streak is not None:
+            changes["belt_detect_streak"] = max(1, int(detect_streak))
         if game_belt_enabled is not None:
             changes["game_belt_enabled"] = bool(game_belt_enabled)
         if changes:
@@ -365,10 +384,12 @@ class RobotWebController:
         return self.get_state()
 
     def start_belt_calibration(self):
+        state = self.get_state()
+        integration_ms = int(state["belt_detect_integration_ms"])
         try:
             from FullSubsystems.belt import open_belt_tcs34725
 
-            sensor = open_belt_tcs34725(integration_time_ms=100, gain=4)
+            sensor = open_belt_tcs34725(integration_time_ms=integration_ms, gain=4)
         except Exception as exc:
             self._update_state(
                 belt_calibration_running=False,
@@ -416,7 +437,12 @@ class RobotWebController:
             return self.get_state()
 
         if action in {"empty", "piece"}:
-            sample = self._read_belt_color_sample(sensor)
+            state = self.get_state()
+            sample = self._read_belt_color_sample(
+                sensor,
+                count=max(1, int(state["belt_detect_samples"])),
+                delay_s=BELT_DETECT_SAMPLE_DELAY_S,
+            )
             with self._lock:
                 if action == "empty":
                     self._belt_calibration_empty_samples.append(sample)
@@ -1171,8 +1197,11 @@ class GameLoopWorker:
         clear_thresh = float(state["belt_clear_thresh"])
         detect_mode = state["belt_detect_mode"]
         post_detect_delay_ms = int(state["belt_post_detect_delay_ms"])
+        detect_integration_ms = int(state["belt_detect_integration_ms"])
+        detect_samples = int(state["belt_detect_samples"])
+        detect_streak_target = int(state["belt_detect_streak"])
 
-        sensor = open_belt_tcs34725(integration_time_ms=100, gain=4)
+        sensor = open_belt_tcs34725(integration_time_ms=detect_integration_ms, gain=4)
         detect_streak = 0
         deadline = time.time() + 12.0
 
@@ -1221,7 +1250,11 @@ class GameLoopWorker:
                                 message="Resuming belt feed",
                             )
                             self._send_serial_cmd(arduino, f"RUN {speed}", {"OK", "ERR"})
-                    sample = self._read_belt_color_sample(sensor, count=4, delay_s=0.03)
+                    sample = self._read_belt_color_sample(
+                        sensor,
+                        count=detect_samples,
+                        delay_s=BELT_DETECT_SAMPLE_DELAY_S,
+                    )
                     clear_value = sample["clear"]
                     covered = (
                         clear_value <= clear_thresh
@@ -1239,11 +1272,12 @@ class GameLoopWorker:
                         belt_mode="continuous",
                         message=(
                             f"Waiting for belt piece detect (clear={clear_value:.1f}, "
-                            f"threshold={clear_thresh:.1f}, mode={detect_mode})"
+                            f"threshold={clear_thresh:.1f}, mode={detect_mode}, "
+                            f"int={detect_integration_ms}ms, samples={detect_samples}, streak={detect_streak_target})"
                         ),
                     )
 
-                    if detect_streak >= 2:
+                    if detect_streak >= detect_streak_target:
                         self.controller._update_state(
                             message=(
                                 f"Belt detected a piece at clear={clear_value:.1f}. "
@@ -1996,8 +2030,6 @@ class BeltCalibrationTestWorker:
 
             from FullSubsystems.belt import open_belt_tcs34725
 
-            sensor = open_belt_tcs34725(integration_time_ms=100, gain=4)
-
             i2c_pca = busio.I2C(board.SCL, board.SDA)
             servo_pca = PCA9685(i2c_pca)
             servo_pca.frequency = 50
@@ -2009,6 +2041,11 @@ class BeltCalibrationTestWorker:
             clear_thresh = float(state["belt_clear_thresh"])
             detect_mode = state["belt_detect_mode"]
             post_detect_delay_ms = int(state["belt_post_detect_delay_ms"])
+            detect_integration_ms = int(state["belt_detect_integration_ms"])
+            detect_samples = int(state["belt_detect_samples"])
+            detect_streak_target = int(state["belt_detect_streak"])
+
+            sensor = open_belt_tcs34725(integration_time_ms=detect_integration_ms, gain=4)
 
             with self.controller._arduino_lock:
                 arduino = serial.Serial(self.PORT, 9600, timeout=1)
@@ -2040,7 +2077,11 @@ class BeltCalibrationTestWorker:
                     )
 
                     while not self.stop_event.is_set():
-                        sample = self.controller._read_belt_color_sample(sensor, count=4, delay_s=0.03)
+                        sample = self.controller._read_belt_color_sample(
+                            sensor,
+                            count=detect_samples,
+                            delay_s=BELT_DETECT_SAMPLE_DELAY_S,
+                        )
                         clear_value = sample["clear"]
                         covered = (
                             clear_value <= clear_thresh
@@ -2057,11 +2098,13 @@ class BeltCalibrationTestWorker:
                             belt_running=True,
                             belt_status="test-running",
                             message=(
-                                f"Test running (clear={clear_value:.1f}, threshold={clear_thresh:.1f}, mode={detect_mode})"
+                                f"Test running (clear={clear_value:.1f}, threshold={clear_thresh:.1f}, "
+                                f"mode={detect_mode}, int={detect_integration_ms}ms, "
+                                f"samples={detect_samples}, streak={detect_streak_target})"
                             ),
                         )
 
-                        if detect_streak >= 2:
+                        if detect_streak >= detect_streak_target:
                             self.controller._update_state(
                                 belt_test_prompt=(
                                     f"Detected a piece at clear={clear_value:.1f}. "
