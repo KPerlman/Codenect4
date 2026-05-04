@@ -34,13 +34,13 @@ GATE_PORT = "/dev/serial0"
 GATE_DEFAULT_SPEED = 600
 GATE_DEFAULT_ACCEL = 400
 GATE_DEFAULT_STEPS = 1000
-BELT_CLEAR_THRESH = 2500.0
+BELT_CLEAR_THRESH = 185.0
 BELT_POST_DETECT_DELAY_MS = 500
 BELT_STAGE_SPEED = 500
 BELT_LAUNCH_SPEED = 4000
 BELT_LAUNCH_ACCEL = 400
 BELT_LAUNCH_STEPS = 1500
-BELT_DETECT_INTEGRATION_MS = 24
+BELT_DETECT_INTEGRATION_MS = 12
 BELT_DETECT_SAMPLES = 1
 BELT_DETECT_STREAK = 1
 BELT_DETECT_SAMPLE_DELAY_S = 0.005
@@ -233,6 +233,7 @@ class RobotWebController:
         self._belt_test_thread = None
         self._belt_test_stop_event = None
         self._belt_test_commands = None
+        self._active_belt_feeder = None
         self._gate_thread = None
         self._gate_stop_event = None
         self._gate_is_out = False
@@ -303,11 +304,15 @@ class RobotWebController:
 
     def set_belt_ready_confirmation(self, accept=True):
         with self._lock:
-            if self._game_thread and self._game_thread.is_alive() and self._belt_feeder is not None:
-                self._belt_feeder.confirm_ready(accept=accept)
+            if self._game_thread and self._game_thread.is_alive() and self._active_belt_feeder is not None:
+                self._active_belt_feeder.confirm_ready(accept=accept)
                 self._update_state(
                     belt_ready_confirmed=bool(accept),
                     message="Confirmed staged belt piece" if accept else "Rejected staged belt piece; resuming search",
+                )
+            elif self._game_thread and self._game_thread.is_alive():
+                self._update_state(
+                    message="No active staged belt piece is available to confirm",
                 )
         return self.get_state()
 
@@ -1405,9 +1410,11 @@ class GameLoopWorker:
             feeder = GameLoopBeltFeeder(self.controller, self.stop_event)
             feeder.start()
             self._belt_feeder = feeder
+            self.controller._active_belt_feeder = feeder
         elif not desired and self._belt_feeder is not None:
             self._belt_feeder.stop()
             self._belt_feeder = None
+            self.controller._active_belt_feeder = None
 
     def _pause_runtime_subsystems(self):
         if self._belt_feeder is not None:
@@ -1421,6 +1428,7 @@ class GameLoopWorker:
         if self._belt_feeder is not None:
             self._belt_feeder.stop()
             self._belt_feeder = None
+            self.controller._active_belt_feeder = None
         sorted_target = int(np.count_nonzero(confirmed_board != 0)) + 5
         self._move_gate_out_if_needed()
         self.controller.enable_sorting(max_sorted=sorted_target)
@@ -1705,8 +1713,20 @@ class GameLoopWorker:
                     break
 
                 visible_red_col = user_visible_column(ai_expected_board, ai_move_col)
+                use_belt = bool(self.controller.get_state()["game_belt_enabled"])
                 self.controller._update_state(
                     suggested_red_column=visible_red_col,
+                    game_status="ready_for_launch",
+                    game_phase="robot_launch",
+                    turn_state="robot_ready_for_launch",
+                    prompt=(
+                        (
+                            f"RED column {visible_red_col} selected. "
+                            "Confirm the staged piece if the belt has stopped at the sensor, or wait for one to arrive."
+                        )
+                        if use_belt
+                        else f"RED column {visible_red_col} selected. Drop the piece manually into the top of that column."
+                    ),
                     message=f"Computer chose RED column {visible_red_col} (score={score})",
                 )
                 active_drop_servo_channel = self._set_drop_servo(
@@ -1714,7 +1734,6 @@ class GameLoopWorker:
                     active_drop_servo_channel,
                     visible_red_col,
                 )
-                use_belt = bool(self.controller.get_state()["game_belt_enabled"])
                 if use_belt:
                     self._sync_belt_feeder_mode()
                     if self._belt_feeder is None:
@@ -1728,6 +1747,7 @@ class GameLoopWorker:
                     if self._belt_feeder is not None:
                         self._belt_feeder.stop()
                         self._belt_feeder = None
+                        self.controller._active_belt_feeder = None
                     self.controller._update_state(
                         message=f"Manual red drop mode active for column {visible_red_col}",
                         belt_running=False,
@@ -1780,6 +1800,7 @@ class GameLoopWorker:
             if self._belt_feeder is not None:
                 self._belt_feeder.stop()
                 self._belt_feeder = None
+                self.controller._active_belt_feeder = None
             active_drop_servo_channel = self._reset_drop_servo(
                 servo_pca,
                 active_drop_servo_channel,

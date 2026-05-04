@@ -1198,6 +1198,13 @@ PAGE_HTML = """
           text: state.prompt || "Drop the red piece on the real board and let vision confirm it.",
         };
       }
+      if (state.game_status === "ready_for_launch") {
+        return {
+          className: "banner waiting",
+          title: `Ready for launch: column ${state.suggested_red_column ?? "-"}`,
+          text: state.prompt || "The robot has chosen a column and is preparing the red launch.",
+        };
+      }
       if (state.game_status === "thinking") {
         return {
           className: "banner thinking",
