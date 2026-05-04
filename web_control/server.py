@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04j"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04k"
 
 
 class StartGameRequest(BaseModel):
@@ -1653,15 +1653,28 @@ PAGE_HTML = """
       }
       primaryButton.disabled = state.game_status === "starting";
 
-      const showReadyControls = state.game_running && state.belt_status === "ready";
+      const launchControlsActive = (
+        state.game_running &&
+        state.game_belt_enabled !== false &&
+        (
+          state.game_status === "ready_for_launch" ||
+          state.belt_status === "starting" ||
+          state.belt_status === "staging" ||
+          state.belt_status === "ready" ||
+          state.belt_status === "recovering" ||
+          state.belt_status === "launching"
+        )
+      );
+      const showReadyControls = launchControlsActive;
       if (readyControls) {
         readyControls.classList.toggle("hidden", !showReadyControls);
       }
       if (readyConfirmButton) {
-        readyConfirmButton.disabled = !(showReadyControls && !state.belt_ready_confirmed);
+        readyConfirmButton.disabled = !(state.game_running && state.belt_status === "ready" && !state.belt_ready_confirmed);
+        readyConfirmButton.textContent = state.belt_status === "ready" ? "Confirm Ready" : "Waiting for Staged Piece";
       }
       if (readyRejectButton) {
-        readyRejectButton.disabled = !showReadyControls;
+        readyRejectButton.disabled = !(state.game_running && state.belt_status === "ready");
       }
     }
 

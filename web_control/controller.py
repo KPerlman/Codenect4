@@ -1745,19 +1745,25 @@ class GameLoopWorker:
                 )
 
                 if not tracker.is_calibrated:
+                    calibration_message = (
+                        "Board not detected yet; keep the full empty board visible"
+                        if not tracker.is_board_active
+                        else "Board detected; calibrating empty board"
+                    )
                     self.controller._update_state(
                         game_status="calibrating",
                         game_phase="calibrating",
                         turn_state="booting",
-                        message="Calibrating empty board",
+                        message=calibration_message,
                     )
                     now = time.time()
-                    if now - last_calibration_log_at >= 5.0:
+                    if now - last_calibration_log_at >= 3.0:
                         self.controller.log_event(
                             "Calibration heartbeat: "
                             f"tracker_active={tracker.is_board_active}, "
                             f"tracker_calibrated={tracker.is_calibrated}, "
-                            f"stable_streak={stable_streak}"
+                            f"stable_streak={stable_streak}, "
+                            f"message={calibration_message}"
                         )
                         last_calibration_log_at = now
                     continue
