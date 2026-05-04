@@ -18,6 +18,7 @@ from FullSubsystems.game_state_cv import (
     compute_ai_move,
     find_single_added_piece,
     internal_column_from_user,
+    legal_ai_transition,
     legal_human_transition,
     open_first_available_camera,
     reopen_camera,
@@ -513,23 +514,84 @@ class GameLoopWorker:
             time.sleep(0.1)
         return None
 
-    def _await_red_confirmation(self, ai_expected_board, ai_visible_column):
+    def _await_red_confirmation(self, cap, tracker, confirmed_board, ai_expected_board, ai_visible_column):
         self.controller._update_state(
             game_status="awaiting_red_confirmation",
             game_phase="robot_confirmation",
             turn_state="robot_waiting_for_placement",
             awaiting_confirmation="red",
             suggested_red_column=ai_visible_column,
-            prompt=f"Place RED in column {ai_visible_column}, then confirm in the app.",
-            message="Waiting for RED placement confirmation",
+            prompt=(
+                f"Place RED in column {ai_visible_column}. "
+                "Vision will confirm it automatically when it sees the correct placement."
+            ),
+            message="Waiting for RED placement",
         )
+        red_last_seen_board = None
+        red_stable_board = None
+        red_stable_streak = 0
         while not self.stop_event.is_set():
             for command in self._drain_commands():
                 if command["type"] == "stop":
                     return None
                 if command["type"] == "confirm_red":
                     return np.copy(ai_expected_board)
-            time.sleep(0.1)
+            ret, frame = cap.read()
+            if not ret:
+                time.sleep(0.1)
+                continue
+
+            _, _, _ = tracker.process_frame(frame)
+            board_copy = np.copy(tracker.board_state)
+
+            if boards_equal(board_copy, red_last_seen_board):
+                red_stable_streak += 1
+            else:
+                red_last_seen_board = np.copy(board_copy)
+                red_stable_streak = 1
+
+            if red_stable_streak >= self.state_streak:
+                red_stable_board = np.copy(board_copy)
+
+            pending_red_count = max(
+                0,
+                int(np.count_nonzero(board_copy == 1)) - int(np.count_nonzero(np.asarray(confirmed_board) == 1)),
+            )
+            self.controller._update_state(
+                tracker_active=tracker.is_board_active,
+                tracker_calibrated=tracker.is_calibrated,
+                current_board=board_to_lists(board_copy),
+                winner=tracker.winner,
+                pending_yellow_count=0,
+                message=(
+                    "Waiting for RED placement"
+                    if pending_red_count == 0
+                    else f"Checking RED placement in column {ai_visible_column}"
+                ),
+            )
+
+            if red_stable_board is None:
+                time.sleep(0.05)
+                continue
+
+            if boards_equal(red_stable_board, ai_expected_board):
+                return np.copy(ai_expected_board)
+
+            legal_red, _ = legal_ai_transition(confirmed_board, red_stable_board)
+            if legal_red:
+                added = find_single_added_piece(confirmed_board, red_stable_board, 1)
+                if added is not None:
+                    _, observed_internal_col = added
+                    observed_visible_col = user_visible_column(red_stable_board, observed_internal_col)
+                    self.controller._update_state(
+                        prompt=(
+                            f"Vision sees RED in column {observed_visible_col}, "
+                            f"but the expected column is {ai_visible_column}. "
+                            "Adjust the piece or use manual confirm if the board is correct."
+                        ),
+                        message=f"Observed RED in column {observed_visible_col}; waiting for expected column",
+                    )
+            time.sleep(0.05)
         return None
 
     def run(self):
@@ -770,7 +832,13 @@ class GameLoopWorker:
                     active_drop_servo_channel,
                     visible_red_col,
                 )
-                maybe_red_board = self._await_red_confirmation(ai_expected_board, visible_red_col)
+                maybe_red_board = self._await_red_confirmation(
+                    cap,
+                    tracker,
+                    confirmed_board,
+                    ai_expected_board,
+                    visible_red_col,
+                )
                 active_drop_servo_channel = self._reset_drop_servo(
                     servo_pca,
                     active_drop_servo_channel,

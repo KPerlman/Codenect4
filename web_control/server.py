@@ -575,7 +575,7 @@ PAGE_HTML = """
         <div id="redCard" class="panel confirm-panel hidden">
           <div class="section-title">Red Placement</div>
           <div class="confirm-title">Confirm robot output</div>
-          <div id="redCopy" class="confirm-copy">The computer has chosen a red column. Place the piece, then confirm it here.</div>
+          <div id="redCopy" class="confirm-copy">The computer has chosen a red column. Place the piece and let vision confirm it automatically.</div>
           <div class="controls">
             <button class="warning" onclick="confirmRed()">Red Piece Placed</button>
           </div>
@@ -834,7 +834,7 @@ PAGE_HTML = """
         return {
           className: "banner waiting",
           title: `Place red in column ${state.suggested_red_column ?? "-"}`,
-          text: state.prompt || "Drop the red piece on the real board and confirm it here.",
+          text: state.prompt || "Drop the red piece on the real board and let vision confirm it.",
         };
       }
       if (state.game_status === "thinking") {
@@ -1004,11 +1004,11 @@ PAGE_HTML = """
         yellowCopy.textContent = state.prompt || "Tap the highlighted yellow slot to confirm it, or tap another slot to override it.";
       }
       if (state.awaiting_confirmation === "red") {
-        redCopy.textContent = state.prompt || "Place the red piece and confirm it here.";
+        redCopy.textContent = state.prompt || "Place the red piece and let vision confirm it automatically.";
       }
       if (state.awaiting_confirmation !== "yellow" && state.awaiting_confirmation !== "red") {
         yellowCopy.textContent = "Detected a yellow move. Confirm it or correct the column.";
-        redCopy.textContent = "The computer has chosen a red column. Place the piece, then confirm it here.";
+        redCopy.textContent = "The computer has chosen a red column. Place the piece and let vision confirm it automatically.";
       }
     }
 
