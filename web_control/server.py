@@ -7,7 +7,7 @@ from web_control.controller import RobotWebController
 
 controller = RobotWebController()
 app = FastAPI(title="Codenect4 Web Control")
-WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04a"
+WEB_CONTROL_VERSION = "minimal-dashboard-2026-05-04b"
 
 
 class StartGameRequest(BaseModel):
@@ -629,9 +629,12 @@ PAGE_HTML = """
         <div class="panel section">
           <div class="section-title">Game Controls</div>
           <div class="controls">
-            <button onclick="startGame()">Start Game</button>
+            <button id="primaryGameButton" onclick="handlePrimaryGameAction()">Start Game</button>
             <button class="warning" onclick="resetGame()">Reset Game</button>
-            <button id="pauseGameButton" class="secondary" onclick="togglePauseGame()">Pause Game</button>
+          </div>
+          <div id="beltReadyControls" class="controls hidden spaced-top">
+            <button id="beltReadyConfirmButton" class="ok" onclick="confirmBeltReady(true)">Confirm Ready</button>
+            <button id="beltReadyRejectButton" class="secondary" onclick="confirmBeltReady(false)">False Positive</button>
           </div>
         </div>
       </div>
@@ -795,10 +798,6 @@ PAGE_HTML = """
             <button id="beltTestButton" class="secondary" onclick="toggleBeltTest()">Test Belt Calibration</button>
             <button id="beltTestContinueButton" class="warning" onclick="continueBeltTest()">Continue</button>
           </div>
-          <div class="controls spaced-top">
-            <button id="beltReadyConfirmButton" class="ok" onclick="confirmBeltReady(true)">Confirm Ready</button>
-            <button id="beltReadyRejectButton" class="secondary" onclick="confirmBeltReady(false)">False Positive</button>
-          </div>
           <div class="confirm-copy" id="beltStatusText">Belt idle.</div>
           <div class="controls">
             <button id="beltActionButton" class="ok" onclick="toggleBelt()">Start Belt</button>
@@ -865,6 +864,14 @@ PAGE_HTML = """
       await syncBeltSettings();
       await api("/api/game/start", "POST", { device: "/dev/video0", width: 640, height: 480, depth: 5, state_streak: 3 });
       await refresh();
+    }
+
+    async function handlePrimaryGameAction() {
+      if (latestState && latestState.game_running && latestState.game_status !== "finished" && latestState.game_status !== "error") {
+        await togglePauseGame();
+        return;
+      }
+      await startGame();
     }
 
     async function togglePauseGame() {
@@ -1350,12 +1357,6 @@ PAGE_HTML = """
       if (continueButton) {
         continueButton.disabled = !state.belt_test_running || !state.belt_test_waiting_continue;
       }
-      if (readyConfirmButton) {
-        readyConfirmButton.disabled = !(state.belt_status === "ready" && !state.belt_ready_confirmed);
-      }
-      if (readyRejectButton) {
-        readyRejectButton.disabled = state.belt_status !== "ready";
-      }
 
       if (state.belt_test_running) {
         status.textContent = state.belt_test_prompt || "Belt calibration test running.";
@@ -1508,15 +1509,36 @@ PAGE_HTML = """
     }
 
     function renderGameControls(state) {
-      const pauseButton = document.getElementById("pauseGameButton");
-      if (!pauseButton) return;
-      pauseButton.disabled = !state.game_running || state.game_status === "finished" || state.game_status === "error";
-      if (state.game_paused) {
-        pauseButton.textContent = "Resume Game";
-        pauseButton.className = "ok";
+      const primaryButton = document.getElementById("primaryGameButton");
+      const readyControls = document.getElementById("beltReadyControls");
+      const readyConfirmButton = document.getElementById("beltReadyConfirmButton");
+      const readyRejectButton = document.getElementById("beltReadyRejectButton");
+      if (!primaryButton) return;
+
+      const gameActive = !!state.game_running && state.game_status !== "finished" && state.game_status !== "error";
+      if (gameActive) {
+        if (state.game_paused) {
+          primaryButton.textContent = "Resume Game";
+          primaryButton.className = "ok";
+        } else {
+          primaryButton.textContent = "Pause Game";
+          primaryButton.className = "secondary";
+        }
       } else {
-        pauseButton.textContent = "Pause Game";
-        pauseButton.className = "secondary";
+        primaryButton.textContent = "Start Game";
+        primaryButton.className = "ok";
+      }
+      primaryButton.disabled = state.game_status === "starting";
+
+      const showReadyControls = state.game_running && state.belt_status === "ready";
+      if (readyControls) {
+        readyControls.classList.toggle("hidden", !showReadyControls);
+      }
+      if (readyConfirmButton) {
+        readyConfirmButton.disabled = !(showReadyControls && !state.belt_ready_confirmed);
+      }
+      if (readyRejectButton) {
+        readyRejectButton.disabled = !showReadyControls;
       }
     }
 

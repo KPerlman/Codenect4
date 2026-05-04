@@ -1878,6 +1878,39 @@ class GameLoopBeltFeeder:
                 time.sleep(0.3)
         raise TimeoutError("Controller did not respond to PING")
 
+    def _open_controller_session(self, serial_module, session_attempts=4):
+        last_error = None
+        for attempt in range(1, session_attempts + 1):
+            arduino = None
+            try:
+                self.controller._update_state(
+                    belt_running=False,
+                    belt_status="starting",
+                    belt_error=None,
+                    message=(
+                        "Connecting belt feeder controller"
+                        if attempt == 1
+                        else f"Retrying belt feeder controller connection ({attempt}/{session_attempts})"
+                    ),
+                )
+                arduino = serial_module.Serial(self.PORT, 9600, timeout=1)
+                time.sleep(2)
+                arduino.reset_input_buffer()
+                arduino.reset_output_buffer()
+                self._sync_controller(arduino, attempts=8, timeout_s=1.5)
+                return arduino
+            except Exception as exc:
+                last_error = exc
+                if arduino is not None:
+                    try:
+                        arduino.close()
+                    except Exception:
+                        pass
+                if self.stop_event.is_set() or self.parent_stop_event.is_set():
+                    break
+                time.sleep(0.8)
+        raise RuntimeError(f"Unable to connect belt feeder controller: {last_error}")
+
     def _start_staging_run(self, arduino, accel):
         self._send_and_wait(arduino, f"SPEED {BELT_STAGE_SPEED}", {"OK", "ERR"}, attempts=6)
         self._send_and_wait(arduino, f"ACCEL {int(accel)}", {"OK", "ERR"}, attempts=6)
@@ -1912,11 +1945,7 @@ class GameLoopBeltFeeder:
             )
 
             with self.controller._arduino_lock:
-                arduino = serial.Serial(self.PORT, 9600, timeout=1)
-                time.sleep(2)
-                arduino.reset_input_buffer()
-                arduino.reset_output_buffer()
-                self._sync_controller(arduino)
+                arduino = self._open_controller_session(serial)
                 self._start_staging_run(arduino, int(state["belt_accel"]))
                 stage_running = True
 
